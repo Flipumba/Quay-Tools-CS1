@@ -38,72 +38,58 @@ namespace QuayTools
             QuayFrame f = new QuayFrame();
             if (info == null) return f;
 
-            float[] ext;
-            lock (Cache)
-            {
-                if (!Cache.TryGetValue(info, out ext))
-                {
-                    ext = MeasureMesh(info);
-                    Cache[info] = ext;
-                }
-            }
-
             f.H = info.m_halfWidth;
-            float xLo = ext[0], xHi = ext[1];
+            float e = GetLaneExtent(info);
 
-            // mesh +x is the right side for a normal segment; Invert mirrors the model (same rule as lane positions)
-            f.YLo = invert ? -xHi : xLo;
-            f.YHi = invert ? -xLo : xHi;
+            // The model spans the lane area on both sides of the centre line; the exact edge is tuned with the offsets.
+            f.YLo = -e;
+            f.YHi = e;
 
-            float center = (f.YLo + f.YHi) * 0.5f;
-            f.WaterIsRight = Mathf.Abs(center) < 0.05f * Mathf.Max(f.H, 1f) ? true : center > 0f;
+            // QuayAI.SegmentModifyMask raises the land slope on the +x (right) side of a normal segment
+            // and on the -x side of an inverted one, so the water is on the right exactly when Invert is set.
+            f.WaterIsRight = invert ^ Settings.SwapLandWater;
             return f;
         }
 
-        private static float[] MeasureMesh(NetInfo info)
+        private static float GetLaneExtent(NetInfo info)
         {
-            float h = info.m_halfWidth;
-            float lo = float.MaxValue, hi = float.MinValue;
+            float[] cached;
+            lock (Cache)
+            {
+                if (Cache.TryGetValue(info, out cached)) return cached[0];
+            }
 
+            float h = info.m_halfWidth;
+            float e = 0f;
+            string dump = string.Empty;
             try
             {
-                if (info.m_segments != null)
+                if (info.m_lanes != null)
                 {
-                    for (int i = 0; i < info.m_segments.Length; i++)
+                    for (int i = 0; i < info.m_lanes.Length; i++)
                     {
-                        Mesh mesh = info.m_segments[i].m_segmentMesh != null
-                            ? info.m_segments[i].m_segmentMesh
-                            : info.m_segments[i].m_mesh;
-                        if (mesh == null) continue;
-
-                        Bounds b = mesh.bounds;
-                        lo = Mathf.Min(lo, b.min.x);
-                        hi = Mathf.Max(hi, b.max.x);
+                        NetInfo.Lane lane = info.m_lanes[i];
+                        dump += " [" + lane.m_laneType + " " + lane.m_position.ToString("0.0") + " w" + lane.m_width.ToString("0.0") + "]";
+                        if (lane.m_laneType == NetInfo.LaneType.None) continue;
+                        e = Mathf.Max(e, Mathf.Abs(lane.m_position) + lane.m_width * 0.5f);
                     }
                 }
             }
             catch (System.Exception ex)
             {
-                Debug.LogWarning("[QuayTools] Could not measure mesh of " + info.name + ": " + ex.Message);
+                Debug.LogWarning("[QuayTools] Could not read lanes of " + info.name + ": " + ex.Message);
             }
 
-            bool ok = hi > lo + 0.01f;
-            if (!ok)
+            if (e < 1f) e = Mathf.Min(6f, h);
+            e = Mathf.Min(e, h);
+
+            Debug.Log("[QuayTools] Quay " + info.name + ": halfWidth=" + h.ToString("0.00") + ", model half width=" + e.ToString("0.00") + ", lanes:" + dump);
+
+            lock (Cache)
             {
-                lo = -h;
-                hi = h;
+                Cache[info] = new[] { e };
             }
-            else
-            {
-                lo = Mathf.Max(lo, -h);
-                hi = Mathf.Min(hi, h);
-            }
-
-            Debug.Log("[QuayTools] Quay " + info.name + ": halfWidth=" + h.ToString("0.00") +
-                      ", model x=[" + lo.ToString("0.00") + " .. " + hi.ToString("0.00") + "]" +
-                      (ok ? "" : " (mesh not measurable, using full width)"));
-
-            return new[] { lo, hi };
+            return e;
         }
 
         /// <summary>Which fence slot lies on the land or the water side. The game's "left" fence slot is drawn on the geometric right.</summary>

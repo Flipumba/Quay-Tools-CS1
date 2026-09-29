@@ -31,7 +31,7 @@ namespace QuayTools
             public UISprite Icon;
             public UILabel Name;
             public UISlider H, V;
-            public UILabel HValue, VValue;
+            public UITextField HValue, VValue;
             public UIScrollablePanel Popup;
             public UIScrollbar Bar;
         }
@@ -139,8 +139,8 @@ namespace QuayTools
             UISlider slider = parent.AddUIComponent<UISlider>();
             slider.size = new Vector2(width, 16f);
             slider.relativePosition = new Vector3(x, y);
-            slider.minValue = -100f;
-            slider.maxValue = 100f;
+            slider.minValue = -FenceStore.MaxUnits;
+            slider.maxValue = FenceStore.MaxUnits;
             slider.stepSize = 1f;
             slider.value = 0f;
 
@@ -161,9 +161,59 @@ namespace QuayTools
             return slider;
         }
 
+        private static UITextField MakeField(UIComponent parent, float x, float y, Action<float> onMeters)
+        {
+            UITextField f = parent.AddUIComponent<UITextField>();
+            f.atlas = UIView.GetAView().defaultAtlas;
+            f.normalBgSprite = "TextFieldPanel";
+            f.hoveredBgSprite = "TextFieldPanelHovered";
+            f.focusedBgSprite = "TextFieldPanel";
+            f.selectionSprite = "EmptySprite";
+            f.builtinKeyNavigation = true;
+            f.isInteractive = true;
+            f.readOnly = false;
+            f.horizontalAlignment = UIHorizontalAlignment.Right;
+            f.verticalAlignment = UIVerticalAlignment.Middle;
+            f.textScale = 0.72f;
+            f.padding = new RectOffset(4, 4, 3, 0);
+            f.size = new Vector2(64f, 18f);
+            f.relativePosition = new Vector3(x, y);
+            f.text = "0.0";
+            f.tooltip = Loc.F("typehint", FenceStore.MaxUnits * FenceStore.Unit);
+
+            UITextField captured = f;
+            f.eventTextSubmitted += delegate (UIComponent c, string s) { CommitField(captured, s, onMeters); };
+            f.eventLostFocus += delegate (UIComponent c, UIFocusEventParameter e) { CommitField(captured, captured.text, onMeters); };
+            return f;
+        }
+
+        private static void CommitField(UITextField f, string s, Action<float> onMeters)
+        {
+            float v;
+            string clean = (s ?? string.Empty).Trim().Replace(',', '.');
+            StringBuilderClean(ref clean);
+            if (!float.TryParse(clean, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v))
+            {
+                onMeters(float.NaN); // restore the old text
+                return;
+            }
+            onMeters(v);
+        }
+
+        private static void StringBuilderClean(ref string s)
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < s.Length; i++)
+            {
+                char ch = s[i];
+                if (char.IsDigit(ch) || ch == '.' || (ch == '-' && sb.Length == 0)) sb.Append(ch);
+            }
+            s = sb.ToString();
+        }
+
         private static string FormatOffset(float sliderValue)
         {
-            return (sliderValue * FenceStore.Unit).ToString("0.0") + Loc.T("meter");
+            return (sliderValue * FenceStore.Unit).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         // ---------- building ----------
@@ -326,21 +376,17 @@ namespace QuayTools
             float sliderWidth = PanelWidth - 24f;
 
             MakeLabel(_add, Loc.T("hoff"), 12f, y, 0.72f);
-            ui.HValue = MakeLabel(_add, FormatOffset(0f), PanelWidth - 92f, y, 0.72f);
-            ui.HValue.autoSize = false;
-            ui.HValue.width = 80f;
-            ui.HValue.textAlignment = UIHorizontalAlignment.Right;
-            y += 16f;
+            MakeLabel(_add, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
+            ui.HValue = MakeField(_add, PanelWidth - 94f, y - 1f, delegate (float m) { OnField(captured, true, m); });
+            y += 20f;
             ui.H = MakeSlider(_add, 12f, y, sliderWidth);
             ui.H.eventValueChanged += delegate (UIComponent c, float v) { OnSlider(captured, true, v); };
             y += 22f;
 
             MakeLabel(_add, Loc.T("voff"), 12f, y, 0.72f);
-            ui.VValue = MakeLabel(_add, FormatOffset(0f), PanelWidth - 92f, y, 0.72f);
-            ui.VValue.autoSize = false;
-            ui.VValue.width = 80f;
-            ui.VValue.textAlignment = UIHorizontalAlignment.Right;
-            y += 16f;
+            MakeLabel(_add, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
+            ui.VValue = MakeField(_add, PanelWidth - 94f, y - 1f, delegate (float m) { OnField(captured, false, m); });
+            y += 20f;
             ui.V = MakeSlider(_add, 12f, y, sliderWidth);
             ui.V.eventValueChanged += delegate (UIComponent c, float v) { OnSlider(captured, false, v); };
             y += 28f;
@@ -362,6 +408,8 @@ namespace QuayTools
             popup.autoLayoutPadding = new RectOffset(0, 0, 0, 2);
             popup.clipChildren = true;
             popup.scrollWheelDirection = UIOrientation.Vertical;
+            PickerUi wheelUi = ui;
+            popup.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(wheelUi, e); };
             popup.isVisible = false;
             ui.Popup = popup;
 
@@ -440,6 +488,9 @@ namespace QuayTools
                 icon.isInteractive = false;
             }
 
+            PickerUi wheelUi = ui;
+            row.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(wheelUi, e); };
+
             NetInfo picked = entry == null ? null : entry.Info;
             PickerUi captured = ui;
             row.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
@@ -450,6 +501,15 @@ namespace QuayTools
                 QuayTool tool = QuayTool.Instance;
                 if (tool != null && !_loading) tool.ApplyModel(captured.Land, picked);
             };
+        }
+
+        private static void OnPopupWheel(PickerUi ui, UIMouseEventParameter e)
+        {
+            float content = ui.Popup.components.Count * (RowHeight + 2f) + 4f;
+            float max = Mathf.Max(0f, content - ui.Popup.height);
+            float y = Mathf.Clamp(ui.Popup.scrollPosition.y - e.wheelDelta * (RowHeight + 2f), 0f, max);
+            ui.Popup.scrollPosition = new Vector2(0f, y);
+            e.Use();
         }
 
         private void TogglePopup(PickerUi ui)
@@ -515,9 +575,27 @@ namespace QuayTools
 
         // ---------- controls -> tool ----------
 
+        private void OnField(PickerUi ui, bool horizontal, float meters)
+        {
+            UISlider slider = horizontal ? ui.H : ui.V;
+            if (float.IsNaN(meters))
+            {
+                (horizontal ? ui.HValue : ui.VValue).text = FormatOffset(slider.value);
+                return;
+            }
+
+            float units = Mathf.Clamp(Mathf.Round(meters / FenceStore.Unit), -FenceStore.MaxUnits, FenceStore.MaxUnits);
+            if (Mathf.Approximately(units, slider.value))
+            {
+                (horizontal ? ui.HValue : ui.VValue).text = FormatOffset(units);
+                return;
+            }
+            slider.value = units; // raises eventValueChanged -> OnSlider applies it
+        }
+
         private void OnSlider(PickerUi ui, bool horizontal, float value)
         {
-            UILabel label = horizontal ? ui.HValue : ui.VValue;
+            UITextField label = horizontal ? ui.HValue : ui.VValue;
             label.text = FormatOffset(value);
 
             if (_loading) return;

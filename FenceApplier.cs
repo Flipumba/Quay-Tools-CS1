@@ -91,6 +91,7 @@ namespace QuayTools
                         segs[id].LeftFenceInfo = null;
                         segs[id].RightFenceInfo = null;
                         FenceStore.Remove(id);
+                        FenceHeight.Release(id);
                         RefreshRender(nm, segs, id);
                         changed++;
                     }

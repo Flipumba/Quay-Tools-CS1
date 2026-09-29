@@ -16,6 +16,7 @@ namespace QuayTools
         private static readonly SavedInt KeyIndex;
         private static readonly SavedBool AnyNetwork;
         private static readonly SavedBool QuickFlip;
+        private static readonly SavedBool Swap;
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
         public static readonly SavedInputKey ActivationKey;
@@ -30,6 +31,7 @@ namespace QuayTools
             KeyIndex = new SavedInt("HotkeyIndex", FileName, 0, true);
             AnyNetwork = new SavedBool("AllowAnyNetwork", FileName, false, true);
             QuickFlip = new SavedBool("QuickFlipEnabled", FileName, true, true);
+            Swap = new SavedBool("SwapLandWater", FileName, false, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
                 SavedInputKey.Encode(KeyCode.Q, true, true, false), true);
@@ -48,6 +50,12 @@ namespace QuayTools
         public static bool AllowAnyNetwork
         {
             get { return AnyNetwork.value; }
+        }
+
+        /// <summary>Fallback: treat the land side as the water side and vice versa.</summary>
+        public static bool SwapLandWater
+        {
+            get { return Swap.value; }
         }
 
         public static bool QuickFlipEnabled
@@ -70,6 +78,11 @@ namespace QuayTools
             group.AddDropdown("Quick-flip hotkey", KeyLabels, current, delegate (int sel)
             {
                 KeyIndex.value = sel;
+            });
+
+            group.AddCheckbox("Swap land/water sides for fences (use only if fences go to the wrong side everywhere)", Swap.value, delegate (bool isChecked)
+            {
+                Swap.value = isChecked;
             });
 
             group.AddCheckbox("Allow tools on any network segment (not only quays)", AnyNetwork.value, delegate (bool isChecked)

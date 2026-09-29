@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using UnityEngine;
 
 namespace QuayTools
 {
@@ -14,8 +15,11 @@ namespace QuayTools
     /// <summary>Thread-safe store of FenceSettings keyed by segment id, saved in the savegame.</summary>
     internal static class FenceStore
     {
-        /// <summary>Metres per slider unit (slider range is -100..100).</summary>
+        /// <summary>Metres per slider unit (slider range is +-MaxUnits).</summary>
         public const float Unit = 0.1f;
+
+        /// <summary>Slider/field limit in units: 1000 units = 100 m.</summary>
+        public const int MaxUnits = 1000;
 
         private const int FormatVersion = 1;
         private static readonly Dictionary<ushort, FenceSettings> Map = new Dictionary<ushort, FenceSettings>();
@@ -73,20 +77,30 @@ namespace QuayTools
         }
 
         /// <summary>
-        /// How a fence corner of this segment must be changed: an extra lateral offset for CalculateCorner
-        /// (outward positive) that moves the fence from the network edge to the wanted place, and a height shift.
+        /// Moves a fence corner (result of NetSegment.CalculateCorner) to where this segment's fence should be:
+        /// at the quay model edge plus the horizontal offset, at the quay deck height plus the vertical offset.
+        /// It works on the finished corner position, so other mods that reshape node corners (Node Controller)
+        /// are respected: the model edge scales with the actual corner width, the along-road position is kept.
         /// </summary>
-        public static bool TryGetCornerAdjust(ushort segment, bool start, bool left, out float offsetDelta, out float dy)
+        public static bool TryAdjustCorner(ushort segment, bool start, bool left, ref Vector3 pos)
         {
-            offsetDelta = 0f;
-            dy = 0f;
-
             FenceSettings s;
             if (!TryGet(segment, out s)) return false;
 
-            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
+            NetManager nm = NetManager.instance;
+            NetSegment[] segs = nm.m_segments.m_buffer;
             NetInfo info = segs[segment].Info;
             if (info == null) return false;
+
+            ushort node = start ? segs[segment].m_startNode : segs[segment].m_endNode;
+            if (node == 0) return false;
+
+            // direction start -> end at this node (both stored directions point from the node into the segment)
+            Vector3 fwd = start ? segs[segment].m_startDirection : -segs[segment].m_endDirection;
+            fwd.y = 0f;
+            if (fwd.sqrMagnitude < 1e-6f) return false;
+            fwd.Normalize();
+            Vector3 right = Vector3.Cross(Vector3.up, fwd);
 
             bool invert = (segs[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None;
             QuayFrame f = QuayGeometry.GetFrame(info, invert);
@@ -99,9 +113,13 @@ namespace QuayTools
             int h = isLand ? s.LandH : s.WaterH;
             int v = isLand ? s.LandV : s.WaterV;
 
-            float target = edge + h * Unit * (f.WaterIsRight ? 1f : -1f); // + moves toward the water
-            offsetDelta = (geometricRight ? target : -target) - f.H;
-            dy = v * Unit;
+            Vector3 center = nm.m_nodes.m_buffer[node].m_position;
+            float cur = Vector3.Dot(pos - center, right);
+            float k = Mathf.Clamp(Mathf.Abs(cur) / Mathf.Max(f.H, 0.1f), 0.05f, 4f); // width of the corner vs. normal
+
+            float target = edge * k + h * Unit * (f.WaterIsRight ? 1f : -1f); // + moves toward the water
+            pos += right * (target - cur);
+            pos.y += v * Unit;
             return true;
         }
 

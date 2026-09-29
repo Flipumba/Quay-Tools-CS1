@@ -26,6 +26,7 @@ namespace QuayTools
             { "voff",          new[] { "Vertical offset (+ up)", "Смещение по вертикали (+ вверх)" } },
             { "noconnect",     new[] { "Do not join fences from both sides", "Не соединять заборы с двух сторон" } },
             { "remove",        new[] { "Remove models", "Убрать модели" } },
+            { "typehint",      new[] { "Type a value in metres (Enter). Limit: +-{0}", "Введите значение в метрах (Enter). Предел: +-{0}" } },
             { "meter",         new[] { " m", " м" } },
             { "flipped1",      new[] { "Flipped 1 segment", "Развёрнут 1 сегмент" } },
             { "flippedN",      new[] { "Flipped {0} segments", "Развёрнуто сегментов: {0}" } },

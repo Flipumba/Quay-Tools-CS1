@@ -17,6 +17,7 @@ namespace QuayTools
 
         private void Update()
         {
+            FenceHeight.Drain();
             if (!Settings.QuickFlipEnabled) return;
             if (!Input.GetKeyDown(Settings.Hotkey)) return;
             if (!IsCtrlHeld()) return;

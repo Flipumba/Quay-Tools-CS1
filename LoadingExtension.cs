@@ -40,6 +40,7 @@ namespace QuayTools
         public override void OnLevelUnloading()
         {
             Debug.Log("[QuayTools] OnLevelUnloading");
+            FenceHeight.Clear();
             Bootstrap.Shutdown();
             Debug.Log("[QuayTools] Shutdown finished");
 
