@@ -1,49 +1,372 @@
-# Quay Tools (Cities: Skylines 1) - Stage A
+# \# Quay Tools — Cities: Skylines 1
 
-Quay Tools with a UnifiedUI button.
+# 
 
-## What works in this stage
-- UnifiedUI button (icon) -> activates the Quay tool and opens a small floating window.
-  If UnifiedUI is not installed/enabled, a small floating button is created instead.
-- Tool "Invert segment": hover a quay (highlighted), left click to flip it.
-  Hold Shift to highlight/flip the whole connected quay (blue = single, green = chain).
-  Right click exits the tool.
-- Quick-flip hotkey without the tool: Ctrl + R over a quay (Shift = whole quay). Optional in mod options.
-- Tool "Add network model" (v1.3): pick a fence/wall network in the list, then click the SIDE of a quay
-  (the stripe shows where it goes). Shift = whole connected quay. "Remove fence" removes it.
-  Works by writing the fence into the segment's left/right fence slot, like the vanilla fence tool
-  (which itself refuses quays because they are not RoadBaseAI). The game saves and deletes it with the segment.
-  No offsets yet (next stage). If the highlighted stripe is on the wrong side compared to the cursor,
-  flip `QuayTool.LeftIsGeometricLeft`.
-- Window button "Remove pedestrian path" is visible but disabled.
+# \*\*Version: v0.0.1\*\*
 
-## Build
-1. Open `QuayTools.csproj` in Visual Studio (or `dotnet build -c Release`).
-2. If the game is not in the default Steam folder, set `CS1ManagedPath` (see csproj).
-3. Build. On Windows the output is copied to
-   `%LOCALAPPDATA%\Colossal Order\Cities_Skylines\Addons\Mods\QuayTools`:
-   `QuayTools.dll`, `UnifiedUILib.dll` and the `Icons` folder. All three must stay together.
-4. Enable "Quay Tools" in Content Manager > Mods. UnifiedUI is optional but recommended.
+# 
 
-## Third-party
-`Lib/UnifiedUILib.dll` is the UnifiedUI helper library (MIT license, (c) 2022 UnifiedUI).
-It is shipped next to the mod DLL so the mod can talk to the UnifiedUI mod.
+# Quay Tools is a Cities: Skylines 1 mod that provides additional tools for working with quay segments and networks.
 
-## Not verified (never compiled or run by the author of this code)
-The UnifiedUI calls were checked against the real UnifiedUILib.dll signatures.
-Game API calls were written from memory. If the build or the game complains, check first:
-- `QuayAI` type (used for quay detection; the game has it, AdaptiveRoads patches it).
-- `ToolBase` overrides: `OnEnable`, `OnDisable`, `OnToolUpdate`, `RenderOverlay` (signatures/access).
-- `RenderManager.instance.OverlayEffect.DrawBezier(...)` argument list.
-- `NetSegment.CalculateMiddlePoints(...)` argument list.
-- `UIComponent.Awake/Start` overrides, `UIButton.eventClicked`, `UITextureSprite`, `UIButton.state`.
-- `ToolController.CurrentTool` setter, `ToolsModifierControl.SetTool<DefaultTool>()`.
-- Tool registration: `ToolInstaller` adds the tool to a private `m_tools` array by reflection
-  (harmless if the field does not exist).
-- Icon size expected by UnifiedUI (icons are 64x64, light glyphs on transparent background).
+# 
 
-## Harmony
-The mod references CitiesHarmony.API (shipped in the mod folder). The Harmony library itself comes from the
-"Harmony (Mod Dependency)" mod (Workshop 2040656402), which must be subscribed/enabled and marked as a
-required item when publishing. `HarmonySetup` applies/removes patches in `OnEnabled` / `OnDisabled`.
-There are no patches yet.
+# \## Features
+
+# 
+
+# \### UnifiedUI
+
+# 
+
+# \- Adds a \*\*UnifiedUI button\*\* for activating Quay Tools.
+
+# \- Clicking the button opens a small floating tool window.
+
+# \- If UnifiedUI is not installed or enabled, Quay Tools creates a small floating button instead.
+
+# 
+
+# \### Invert Segment
+
+# 
+
+# Flip the direction of a quay segment without rebuilding it.
+
+# 
+
+# \- Hover over a quay to highlight it.
+
+# \- \*\*Left click\*\* to flip the highlighted segment.
+
+# \- Hold \*\*Shift\*\* to highlight and flip the entire connected quay.
+
+# &#x20; - \*\*Blue\*\* — single segment.
+
+# &#x20; - \*\*Green\*\* — connected quay.
+
+# \- \*\*Right click\*\* to exit the tool.
+
+# 
+
+# \#### Quick Flip
+
+# 
+
+# You can also flip a quay without activating the tool:
+
+# 
+
+# \- \*\*Ctrl + R\*\* over a quay — flip the segment.
+
+# \- \*\*Ctrl + R + Shift\*\* — flip the entire connected quay.
+
+# \- The hotkey can be enabled or disabled in the mod options.
+
+# 
+
+# \### Add Network Model
+
+# 
+
+# Allows you to add a fence or wall network to a quay.
+
+# 
+
+# 1\. Select a fence/wall network from the list.
+
+# 2\. Click the \*\*side of a quay\*\* where you want to place it.
+
+# 3\. Hold \*\*Shift\*\* to apply it to the entire connected quay.
+
+# 4\. Use \*\*Remove fence\*\* to remove the fence.
+
+# 
+
+# The selected side is indicated by a highlighted stripe.
+
+# 
+
+# The tool works by writing the fence into the segment's \*\*left/right fence slot\*\*, similarly to the vanilla fence tool.
+
+# 
+
+# The vanilla fence tool normally refuses to work with quays because quays are not `RoadBaseAI`. Quay Tools bypasses this limitation by writing directly to the segment data.
+
+# 
+
+# The game saves the fence together with the segment and removes it when the segment is deleted.
+
+# 
+
+# > \*\*Note:\*\* Fence offsets are not implemented yet.
+
+# 
+
+# \#### Fence Side Configuration
+
+# 
+
+# If the highlighted stripe appears on the opposite side from the cursor, change:
+
+# 
+
+# ```text
+
+# QuayTool.LeftIsGeometricLeft
+
+# ```
+
+# 
+
+# \## Planned / Incomplete Features
+
+# 
+
+# \- Fence/network offsets are not implemented yet.
+
+# \- The \*\*Remove pedestrian path\*\* button is visible in the tool window but currently disabled.
+
+# 
+
+# \## Building
+
+# 
+
+# \### Requirements
+
+# 
+
+# \- Visual Studio with the required .NET tooling, or the `dotnet` CLI.
+
+# \- A local installation of Cities: Skylines 1.
+
+# \- Required mod dependencies listed below.
+
+# 
+
+# \### Build with Visual Studio
+
+# 
+
+# Open:
+
+# 
+
+# ```text
+
+# QuayTools.csproj
+
+# ```
+
+# 
+
+# in Visual Studio and build the project in \*\*Release\*\* configuration.
+
+# 
+
+# \### Build with dotnet
+
+# 
+
+# ```bash
+
+# dotnet build -c Release
+
+# ```
+
+# 
+
+# If Cities: Skylines is not installed in the default Steam directory, set `CS1ManagedPath` in `QuayTools.csproj`.
+
+# 
+
+# After a successful build on Windows, the following files are copied to:
+
+# 
+
+# ```text
+
+# %LOCALAPPDATA%\\Colossal Order\\Cities\_Skylines\\Addons\\Mods\\QuayTools
+
+# ```
+
+# 
+
+# \- `QuayTools.dll`
+
+# \- `UnifiedUILib.dll`
+
+# \- `Icons\\`
+
+# 
+
+# All three must remain together in the mod folder.
+
+# 
+
+# Enable \*\*Quay Tools\*\* in:
+
+# 
+
+# \*\*Content Manager → Mods\*\*
+
+# 
+
+# UnifiedUI is optional, but recommended.
+
+# 
+
+# \## Dependencies
+
+# 
+
+# \### UnifiedUI
+
+# 
+
+# `Lib/UnifiedUILib.dll` is the UnifiedUI helper library.
+
+# 
+
+# \- License: MIT
+
+# \- Copyright: © 2022 UnifiedUI
+
+# 
+
+# The library is shipped alongside the mod DLL so Quay Tools can communicate with the UnifiedUI mod.
+
+# 
+
+# \### Harmony
+
+# 
+
+# Quay Tools references `CitiesHarmony.API`.
+
+# 
+
+# The Harmony library itself is provided by the \*\*Harmony (Mod Dependency)\*\* mod:
+
+# 
+
+# \*\*Workshop ID:\*\* `2040656402`
+
+# 
+
+# The Harmony mod must be:
+
+# 
+
+# \- subscribed to;
+
+# \- enabled;
+
+# \- added as a required item when publishing Quay Tools to the Steam Workshop.
+
+# 
+
+# `HarmonySetup` applies and removes Harmony patches in `OnEnabled` and `OnDisabled`.
+
+# 
+
+# There are currently \*\*no Harmony patches implemented\*\*.
+
+# 
+
+# \## Compatibility
+
+# 
+
+# The current version has been \*\*successfully compiled and tested in-game\*\*.
+
+# 
+
+# The UnifiedUI API calls were verified against the actual `UnifiedUILib.dll` signatures.
+
+# 
+
+# The following Cities: Skylines APIs are used by the project:
+
+# 
+
+# \- `QuayAI` — used for quay detection.
+
+# \- `ToolBase` overrides:
+
+# &#x20; - `OnEnable`
+
+# &#x20; - `OnDisable`
+
+# &#x20; - `OnToolUpdate`
+
+# &#x20; - `RenderOverlay`
+
+# \- `RenderManager.instance.OverlayEffect.DrawBezier(...)`
+
+# \- `NetSegment.CalculateMiddlePoints(...)`
+
+# \- `UIComponent.Awake()` / `Start()`
+
+# \- `UIButton.eventClicked`
+
+# \- `UITextureSprite`
+
+# \- `UIButton.state`
+
+# \- `ToolController.CurrentTool`
+
+# \- `ToolsModifierControl.SetTool<DefaultTool>()`
+
+# 
+
+# \### Tool Registration
+
+# 
+
+# `ToolInstaller` adds the Quay Tools component to the private `m\_tools` array using reflection.
+
+# 
+
+# If the field does not exist, the registration attempt is harmless.
+
+# 
+
+# \### UnifiedUI Icon
+
+# 
+
+# UnifiedUI expects icons to be \*\*64×64 pixels\*\*.
+
+# 
+
+# The included icons use light glyphs on a transparent background.
+
+# 
+
+# \## Project Status
+
+# 
+
+# \*\*v0.0.1\*\*
+
+# 
+
+# The initial release includes:
+
+# 
+
+# \- UnifiedUI integration.
+
+# \- Quay segment inversion.
+
+# \- Quick-flip hotkey.
+
+# \- Connected quay selection and flipping.
+
+# \- Adding fence/wall networks to quay segments.
+
+# \- Removing fences from quay segments.
+
+# \- Fallback floating button when UnifiedUI is unavailable.
+
