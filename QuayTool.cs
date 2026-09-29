@@ -23,6 +23,8 @@ namespace QuayTools
         private static readonly Color ChainColor = new Color(0.30f, 1.00f, 0.55f, 0.55f);
         private static readonly Color SelectedColor = new Color(1.00f, 0.75f, 0.10f, 0.60f);
         private static readonly Color LandColor = new Color(0.30f, 1.00f, 0.45f, 0.95f);
+        internal static readonly Color StartColor = new Color(0.20f, 0.95f, 1.00f, 0.95f);
+        internal static readonly Color EndColor = new Color(1.00f, 0.35f, 0.90f, 0.95f);
         private static readonly Color WaterColor = new Color(0.20f, 0.60f, 1.00f, 0.95f);
 
         public static QuayTool Instance { get; private set; }
@@ -274,13 +276,14 @@ namespace QuayTools
             FenceApplier.Refresh(new List<ushort>(_selected));
         }
 
-        public void ApplyNoConnect(bool noConnect)
+        public void ApplyCap(bool atStart, bool value)
         {
             if (_selected.Count == 0) return;
 
             for (int i = 0; i < _selected.Count; i++)
             {
-                FenceStore.GetOrCreate(_selected[i]).NoConnect = noConnect;
+                FenceSettings s = FenceStore.GetOrCreate(_selected[i]);
+                if (atStart) s.CapStart = value; else s.CapEnd = value;
             }
             FenceApplier.Refresh(new List<ushort>(_selected));
         }
@@ -323,6 +326,12 @@ namespace QuayTools
             QuayFrame f = QuayGeometry.GetFrame(segmentId);
             QuayGeometry.DrawStripe(cameraInfo, segmentId, f.LandEdge, 0.7f, LandColor);
             QuayGeometry.DrawStripe(cameraInfo, segmentId, f.WaterEdge, 0.7f, WaterColor);
+
+            // rings on the two ends: cyan = start of the segment, magenta = end (for the "close fence" options)
+            NetManager nm = NetManager.instance;
+            NetSegment seg = nm.m_segments.m_buffer[segmentId];
+            RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, StartColor, nm.m_nodes.m_buffer[seg.m_startNode].m_position, 5f, -1f, 1280f, false, true);
+            RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, EndColor, nm.m_nodes.m_buffer[seg.m_endNode].m_position, 5f, -1f, 1280f, false, true);
         }
     }
 }

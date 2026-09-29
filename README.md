@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.1.3**
+**Version: v0.1.4**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -43,7 +43,7 @@ Adds fence/wall networks along the full length of quay segments.
    - **Horizontal offset** — slider up to ±100 m (0.1 m per step) or type a value in the field next to it. 0 places the fence at the edge of the quay lanes; positive values move it towards the water, negative towards the land.
    - **Vertical offset** — same range.
    - Double-click a slider to reset it. The drop-down lists scroll with the mouse wheel.
-5. Optional checkbox: **do not join fences from both sides** (removes the end cap that connects left and right fences).
+5. Optional: **Close fence at segment start / end** — a straight fence across the quay, at right angles, at a dead end of the segment (the start is marked with a cyan ring, the end with a magenta ring). Each end is set separately, per segment.
 6. Close the tool when finished.
 
 To remove models, select the segments and press **Remove models** under the settings.
@@ -110,6 +110,11 @@ Quay Tools uses `CitiesHarmony.API`; the Harmony library itself comes from the *
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.1.4
+- Fences at node fragments (bends) are rebuilt too, so height and offsets also work on nodes edited with Node Controller.
+- The closing fence at dead ends is now straight and perpendicular; separate options for the start and the end of each segment (replaces "do not join").
+- Closing and bend fences follow the set heights.
 
 ### v0.1.3
 - Fences are rebuilt from the final node corners, so they follow node edits made with Node Controller (width, curve) and stay editable.

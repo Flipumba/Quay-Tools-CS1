@@ -127,8 +127,8 @@ namespace QuayTools.Patches
     }
 
     /// <summary>
-    /// NetNode.GetEndFences(ref uint): the game closes the fences of both sides across a dead end.
-    /// For quay segments with "do not join" checked we report "no end fence" (65535).
+    /// NetNode.GetEndFences(ref uint): the game closes a dead end with a fence (an arc) when both sides have one.
+    /// For our segments the closing fence is optional per end (see FenceSettings.CapStart / CapEnd).
     /// </summary>
     [HarmonyPatch]
     internal static class EndFencePatch
@@ -145,14 +145,86 @@ namespace QuayTools.Patches
                 ushort segment = __instance.GetSegment(i);
                 if (segment == 0) continue;
 
-                if (FenceStore.NoConnect(segment))
-                {
-                    __0 = 65535u;
-                    return false;
-                }
-                break;
+                FenceSettings s;
+                if (!FenceStore.TryGet(segment, out s)) return true; // not ours: vanilla behaviour
+
+                NetManager nm = NetManager.instance;
+                NetSegment[] segs = nm.m_segments.m_buffer;
+                bool isStart = nm.m_nodes.m_buffer[segs[segment].m_startNode].m_position == __instance.m_position;
+
+                NetInfo fence = segs[segment].LeftFenceInfo;
+                if (fence == null) fence = segs[segment].RightFenceInfo;
+
+                bool close = isStart ? s.CapStart : s.CapEnd;
+                __0 = close && fence != null ? (uint)fence.m_prefabDataIndex : 65535u;
+                return false;
             }
             return true;
+        }
+    }
+
+    /// <summary>
+    /// NetNode.RefreshBendFenceData(ushort node, NetInfo info, NetInfo fenceInfo, ref uint instance, ref Instance data,
+    ///                              bool left1, bool left2, ushort segment1, ushort segment2, int index)
+    /// Rebuilds the fence at bend nodes from our corners (so that offsets, heights and node edits are respected).
+    /// </summary>
+    [HarmonyPatch]
+    internal static class BendFencePatch
+    {
+        private static bool _failed;
+
+        public static MethodBase TargetMethod()
+        {
+            return AccessTools.Method(typeof(NetNode), "RefreshBendFenceData");
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPriority(Priority.Last)]
+        public static void Postfix(ref NetNode __instance, ushort __0, NetInfo __2, ref RenderManager.Instance __4,
+                                   bool __5, bool __6, ushort __7, ushort __8, int __9)
+        {
+            if (_failed || __2 == null) return;
+            try
+            {
+                FenceHeight.RebuildBend(ref __instance, __0, __2, ref __4, __5, __6, __7, __8, __9);
+            }
+            catch (Exception ex)
+            {
+                _failed = true;
+                Debug.LogError("[QuayTools] Bend fence rebuild failed, disabled: " + ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// NetNode.RefreshEndFenceData(ushort node, int index, NetInfo info, NetInfo fenceInfo, uint fences, ref Instance data)
+    /// Replaces the arc that closes a dead end by a straight fence across the quay.
+    /// </summary>
+    [HarmonyPatch]
+    internal static class EndFenceShapePatch
+    {
+        private static bool _failed;
+
+        public static MethodBase TargetMethod()
+        {
+            return AccessTools.Method(typeof(NetNode), "RefreshEndFenceData");
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPriority(Priority.Last)]
+        public static void Postfix(ref NetNode __instance, ushort __0, int __1, NetInfo __2, NetInfo __3,
+                                   ref RenderManager.Instance __5)
+        {
+            if (_failed || __2 == null || __3 == null) return;
+            try
+            {
+                FenceHeight.RebuildEnd(ref __instance, __0, __1, __2, __3, ref __5);
+            }
+            catch (Exception ex)
+            {
+                _failed = true;
+                Debug.LogError("[QuayTools] End fence rebuild failed, disabled: " + ex);
+            }
         }
     }
 }

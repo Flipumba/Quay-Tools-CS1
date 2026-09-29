@@ -9,7 +9,7 @@ namespace QuayTools
     internal class FenceSettings
     {
         public int LandH, LandV, WaterH, WaterV; // slider units, see FenceStore.Unit
-        public bool NoConnect = true;
+        public bool CapStart, CapEnd; // straight closing fence at the start / end of the segment (dead ends)
     }
 
     /// <summary>Thread-safe store of FenceSettings keyed by segment id, saved in the savegame.</summary>
@@ -21,7 +21,7 @@ namespace QuayTools
         /// <summary>Slider/field limit in units: 1000 units = 100 m.</summary>
         public const int MaxUnits = 1000;
 
-        private const int FormatVersion = 1;
+        private const int FormatVersion = 2;
         private static readonly Dictionary<ushort, FenceSettings> Map = new Dictionary<ushort, FenceSettings>();
 
         public static bool TryGet(ushort segment, out FenceSettings settings)
@@ -68,12 +68,6 @@ namespace QuayTools
             {
                 Map.Clear();
             }
-        }
-
-        public static bool NoConnect(ushort segment)
-        {
-            FenceSettings s;
-            return TryGet(segment, out s) && s.NoConnect;
         }
 
         /// <summary>
@@ -149,7 +143,8 @@ namespace QuayTools
                         w.Write(s.LandV);
                         w.Write(s.WaterH);
                         w.Write(s.WaterV);
-                        w.Write(s.NoConnect);
+                        w.Write(s.CapStart);
+                        w.Write(s.CapEnd);
                     }
                 }
                 w.Flush();
@@ -168,7 +163,7 @@ namespace QuayTools
                 using (BinaryReader r = new BinaryReader(ms))
                 {
                     int version = r.ReadInt32();
-                    if (version != FormatVersion) return;
+                    if (version != 1 && version != FormatVersion) return;
 
                     int count = r.ReadInt32();
                     lock (Map)
@@ -181,7 +176,12 @@ namespace QuayTools
                             s.LandV = r.ReadInt32();
                             s.WaterH = r.ReadInt32();
                             s.WaterV = r.ReadInt32();
-                            s.NoConnect = r.ReadBoolean();
+                            if (version == 1) r.ReadBoolean(); // old "do not join" flag, replaced by the two closing options
+                            else
+                            {
+                                s.CapStart = r.ReadBoolean();
+                                s.CapEnd = r.ReadBoolean();
+                            }
                             Map[id] = s;
                         }
                     }

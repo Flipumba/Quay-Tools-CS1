@@ -144,12 +144,119 @@ namespace QuayTools
                 line.d = lineEnd;
                 line.b = (m30 + m32) * 0.5f;
                 line.c = (m31 + m33) * 0.5f;
-                ApplyHeightMap(segmentId, leftFence, line, hw + 6f, ref data);
+                ApplyHeightMap(segmentId * 2 + (leftFence ? 1 : 0), line, hw + 6f, ref data);
+            }
+        }
+
+        private static void Corner(ushort segmentId, bool start, bool left, float offset, out Vector3 pos, out Vector3 dir, out bool smooth)
+        {
+            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
+            int savedDepth = Patches.FenceContext.Depth;
+            Patches.FenceContext.Depth = 0; // we adjust the corner ourselves
+            try
+            {
+                segs[segmentId].CalculateCorner(segmentId, true, start, left, out pos, out dir, out smooth, offset);
+            }
+            finally
+            {
+                Patches.FenceContext.Depth = savedDepth;
+            }
+            FenceStore.TryAdjustCorner(segmentId, start, left, ref pos);
+        }
+
+        /// <summary>
+        /// Same as NetNode.RefreshBendFenceData (the fence that joins two segments at a bend node), built from our corners.
+        /// </summary>
+        public static void RebuildBend(ref NetNode node, ushort nodeId, NetInfo fenceInfo, ref RenderManager.Instance data,
+                                       bool left1, bool left2, ushort seg1, ushort seg2, int index)
+        {
+            if (!FenceStore.Has(seg1) && !FenceStore.Has(seg2)) return;
+
+            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
+            NetInfo i1 = segs[seg1].Info, i2 = segs[seg2].Info;
+            if (i1 == null || i2 == null) return;
+
+            bool start1 = segs[seg1].m_startNode == nodeId;
+            bool start2 = segs[seg2].m_startNode == nodeId;
+
+            Vector3 p4, p6, p5, p7;
+            bool s9, s11;
+            Corner(seg1, start1, left1, i1.m_netAI.GetFencePosition(left1), out p4, out p6, out s9);
+            Corner(seg2, start2, left2, i2.m_netAI.GetFencePosition(left2), out p5, out p7, out s11);
+
+            float hw = fenceInfo.m_halfWidth;
+            Vector3 n12 = Vector3.Cross(p6, Vector3.up).normalized;
+            Vector3 n14 = Vector3.Cross(p7, Vector3.up).normalized;
+            Vector3 p16 = p4 - n12 * hw;
+            Vector3 p17 = p4 + n12 * hw;
+            Vector3 p18 = p5 + n14 * hw;
+            Vector3 p19 = p5 - n14 * hw;
+
+            Vector3 m20 = Vector3.zero, m21 = Vector3.zero, m22 = Vector3.zero, m23 = Vector3.zero;
+            NetSegment.CalculateMiddlePoints(p16, -p6, p18, -p7, true, true, out m20, out m21);
+            NetSegment.CalculateMiddlePoints(p17, -p6, p19, -p7, true, true, out m22, out m23);
+
+            float vScale = fenceInfo.m_netAI.GetVScale();
+            data.m_dataMatrix0 = NetSegment.CalculateControlMatrix(p16, m20, m21, p18, p17, m22, m23, p19, node.m_position, vScale);
+            data.m_extraData.m_dataMatrix2 = NetSegment.CalculateControlMatrix(p17, m22, m23, p19, p16, m20, m21, p18, node.m_position, vScale);
+
+            if (fenceInfo.m_requireHeightMap)
+            {
+                Bezier3 line = new Bezier3();
+                line.a = p4;
+                line.d = p5;
+                line.b = (m20 + m22) * 0.5f;
+                line.c = (m21 + m23) * 0.5f;
+                ApplyHeightMap(-(1 + nodeId * 16 + (index & 7)), line, hw + 6f, ref data);
+            }
+        }
+
+        /// <summary>
+        /// Replacement shape of NetNode.RefreshEndFenceData (the fence closing a dead end): a straight fence across
+        /// the quay, at right angles to it, between the left and right fence of the segment.
+        /// </summary>
+        public static void RebuildEnd(ref NetNode node, ushort nodeId, int index, NetInfo info, NetInfo fenceInfo,
+                                      ref RenderManager.Instance data)
+        {
+            ushort seg = node.GetSegment(index);
+            if (seg == 0 || !FenceStore.Has(seg)) return;
+
+            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
+            bool isStart = segs[seg].m_startNode == nodeId;
+            float offset = info.m_netAI.GetFencePosition(true);
+
+            Vector3 pL, dL, pR, dR;
+            bool sL, sR;
+            Corner(seg, isStart, true, offset, out pL, out dL, out sL);
+            Corner(seg, isStart, false, offset, out pR, out dR, out sR);
+
+            dL.y = 0f;
+            if (dL.sqrMagnitude < 1e-6f) return;
+            Vector3 axis = dL.normalized; // points from the end into the segment
+
+            float hw = fenceInfo.m_halfWidth;
+            Vector3 a0 = pL + axis * hw, a3 = pR + axis * hw;
+            Vector3 b0 = pL - axis * hw, b3 = pR - axis * hw;
+            Vector3 a1 = Vector3.Lerp(a0, a3, 1f / 3f), a2 = Vector3.Lerp(a0, a3, 2f / 3f);
+            Vector3 b1 = Vector3.Lerp(b0, b3, 1f / 3f), b2 = Vector3.Lerp(b0, b3, 2f / 3f);
+
+            float vScale = fenceInfo.m_netAI.GetVScale() / 1.5f;
+            data.m_dataMatrix0 = NetSegment.CalculateControlMatrix(a0, a1, a2, a3, b0, b1, b2, b3, node.m_position, vScale);
+            data.m_extraData.m_dataMatrix2 = NetSegment.CalculateControlMatrix(b0, b1, b2, b3, a0, a1, a2, a3, node.m_position, vScale);
+
+            if (fenceInfo.m_requireHeightMap)
+            {
+                Bezier3 line = new Bezier3();
+                line.a = pL;
+                line.d = pR;
+                line.b = Vector3.Lerp(pL, pR, 1f / 3f);
+                line.c = Vector3.Lerp(pL, pR, 2f / 3f);
+                ApplyHeightMap(-(1 + nodeId * 16 + 8 + (index & 7)), line, hw + 6f, ref data);
             }
         }
 
         /// <summary>Replaces the terrain height map of a fence instance by one holding the height of the fence line.</summary>
-        private static void ApplyHeightMap(ushort segmentId, bool leftFence, Bezier3 line, float margin, ref RenderManager.Instance data)
+        private static void ApplyHeightMap(int key, Bezier3 line, float margin, ref RenderManager.Instance data)
         {
             const int Samples = 64;
             const int Window = 12;
@@ -197,7 +304,6 @@ namespace QuayTools
                 }
             }
 
-            int key = segmentId * 2 + (leftFence ? 1 : 0);
             Destroy(key);
 
             Texture2D tex = new Texture2D(Size, Size, TextureFormat.ARGB32, false, true);

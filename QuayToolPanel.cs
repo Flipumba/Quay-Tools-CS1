@@ -47,9 +47,9 @@ namespace QuayTools
         private UILabel _selectionLabel;
         private PickerUi _landUi;
         private PickerUi _waterUi;
-        private UIButton _noConnectButton;
+        private UIButton _capStartButton, _capEndButton;
         private UIButton _removeButton;
-        private bool _noConnect = true;
+        private bool _capStart, _capEnd;
         private PickerUi _openPopup;
 
         // ---------- lifetime ----------
@@ -281,6 +281,32 @@ namespace QuayTools
             BuildAddNetworkSection();
         }
 
+        private UIButton MakeCapButton(float y, bool atStart)
+        {
+            UIButton b = _add.AddUIComponent<UIButton>();
+            b.width = PanelWidth - 20f;
+            b.height = 30f;
+            b.relativePosition = new Vector3(10f, y);
+            StyleButton(b);
+            b.textScale = 0.8f;
+            b.textHorizontalAlignment = UIHorizontalAlignment.Left;
+            b.textPadding = new RectOffset(10, 0, 0, 0);
+            Color32 c = atStart ? (Color32)QuayTool.StartColor : (Color32)QuayTool.EndColor;
+            b.textColor = c;
+            b.hoveredTextColor = c;
+            b.pressedTextColor = c;
+            b.focusedTextColor = c;
+            b.eventClicked += delegate (UIComponent comp, UIMouseEventParameter e)
+            {
+                if (_loading) return;
+                if (atStart) _capStart = !_capStart; else _capEnd = !_capEnd;
+                UpdateCapText();
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null) tool.ApplyCap(atStart, atStart ? _capStart : _capEnd);
+            };
+            return b;
+        }
+
         private void BuildAddNetworkSection()
         {
             _add = AddUIComponent<UIPanel>();
@@ -295,24 +321,10 @@ namespace QuayTools
             _landUi = BuildBlock(true, ref y);
             _waterUi = BuildBlock(false, ref y);
 
-            _noConnectButton = _add.AddUIComponent<UIButton>();
-            _noConnectButton.width = PanelWidth - 20f;
-            _noConnectButton.height = 30f;
-            _noConnectButton.relativePosition = new Vector3(10f, y);
-            StyleButton(_noConnectButton);
-            _noConnectButton.textScale = 0.8f;
-            _noConnectButton.textHorizontalAlignment = UIHorizontalAlignment.Left;
-            _noConnectButton.textPadding = new RectOffset(10, 0, 0, 0);
-            _noConnectButton.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
-            {
-                if (_loading) return;
-                _noConnect = !_noConnect;
-                UpdateNoConnectText();
-                QuayTool tool = QuayTool.Instance;
-                if (tool != null) tool.ApplyNoConnect(_noConnect);
-            };
-            UpdateNoConnectText();
-            y += 36f;
+            _capStartButton = MakeCapButton(y, true);
+            _capEndButton = MakeCapButton(y + 34f, false);
+            UpdateCapText();
+            y += 72f;
 
             _removeButton = _add.AddUIComponent<UIButton>();
             _removeButton.width = PanelWidth - 20f;
@@ -603,10 +615,12 @@ namespace QuayTools
             if (tool != null) tool.ApplyOffset(ui.Land, horizontal, Mathf.RoundToInt(value));
         }
 
-        private void UpdateNoConnectText()
+        private void UpdateCapText()
         {
-            _noConnectButton.text = (_noConnect ? "[x]  " : "[  ]  ") + Loc.T("noconnect");
-            _noConnectButton.state = _noConnect ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
+            _capStartButton.text = (_capStart ? "[x]  " : "[  ]  ") + Loc.T("capstart");
+            _capStartButton.state = _capStart ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
+            _capEndButton.text = (_capEnd ? "[x]  " : "[  ]  ") + Loc.T("capend");
+            _capEndButton.state = _capEnd ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
         }
 
         // ---------- tool -> controls ----------
@@ -660,8 +674,9 @@ namespace QuayTools
                 _waterUi.HValue.text = FormatOffset(s.WaterH);
                 _waterUi.VValue.text = FormatOffset(s.WaterV);
 
-                _noConnect = s.NoConnect;
-                UpdateNoConnectText();
+                _capStart = s.CapStart;
+                _capEnd = s.CapEnd;
+                UpdateCapText();
             }
             finally
             {
@@ -678,7 +693,8 @@ namespace QuayTools
                 blocks[i].H.isEnabled = enabled;
                 blocks[i].V.isEnabled = enabled;
             }
-            _noConnectButton.isEnabled = enabled;
+            _capStartButton.isEnabled = enabled;
+            _capEndButton.isEnabled = enabled;
             _removeButton.isEnabled = enabled;
         }
 
