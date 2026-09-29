@@ -127,6 +127,15 @@ namespace QuayTools
 
             segs[segmentId].m_flags ^= NetSegment.Flags.Invert;
 
+            // Inverting mirrors the quay model, so land and water swap sides. Fences we placed follow their
+            // land/water meaning, hence they swap slots (the slots themselves are fixed to geometric sides).
+            if (FenceStore.Has(segmentId))
+            {
+                NetInfo leftFence = segs[segmentId].LeftFenceInfo;
+                segs[segmentId].LeftFenceInfo = segs[segmentId].RightFenceInfo;
+                segs[segmentId].RightFenceInfo = leftFence;
+            }
+
             ushort startNode = segs[segmentId].m_startNode;
             ushort endNode = segs[segmentId].m_endNode;
 
@@ -147,14 +156,14 @@ namespace QuayTools
                 {
                     if (!IsCreated(segmentId))
                     {
-                        report("Segment no longer exists");
+                        report(Loc.T("gone"));
                         return;
                     }
 
                     NetInfo info = NetManager.instance.m_segments.m_buffer[segmentId].Info;
                     if (!IsQuay(info))
                     {
-                        report("Not a quay: " + (info != null ? info.name : "unknown"));
+                        report(Loc.F("notquay", info != null ? info.name : "?"));
                         return;
                     }
 
@@ -174,12 +183,12 @@ namespace QuayTools
                         FlipOne(list[i]);
                     }
 
-                    report("Flipped " + list.Count + (list.Count == 1 ? " segment" : " segments"));
+                    report(list.Count == 1 ? Loc.T("flipped1") : Loc.F("flippedN", list.Count));
                 }
                 catch (Exception ex)
                 {
                     Debug.LogError("[QuayTools] Flip failed: " + ex);
-                    report("Flip failed, see output_log.txt");
+                    report(Loc.T("failed"));
                 }
             });
         }

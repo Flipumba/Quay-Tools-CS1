@@ -25,7 +25,7 @@ namespace QuayTools
             ushort segmentId;
             if (!NetRaycaster.TryGetSegmentUnderCursor(out segmentId))
             {
-                ShowMessage("No road/quay under the cursor");
+                ShowMessage(Loc.T("nothing"));
                 return;
             }
 
