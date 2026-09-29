@@ -63,6 +63,28 @@ QuayTool.LeftIsGeometricLeft
 - Fence/network offsets are not implemented yet.
 - The **Remove pedestrian path** button is visible in the tool window but currently disabled.
 
+## Installation
+
+1. Download the mod archive attached to the project release.
+2. Extract the archive. It contains the `QuayTools` mod folder.
+3. Copy the `QuayTools` folder to:
+
+   ```text
+   %LOCALAPPDATA%\Colossal Order\Cities_Skylines\Addons\Mods\
+   ```
+
+   Create the `Mods` folder if it does not exist. The resulting path should be:
+
+   ```text
+   %LOCALAPPDATA%\Colossal Order\Cities_Skylines\Addons\Mods\QuayTools
+   ```
+
+4. Make sure `QuayTools.dll`, `UnifiedUILib.dll`, and the `Icons` folder are together inside `QuayTools`.
+5. Subscribe to and enable **Harmony (Mod Dependency)** (Workshop ID: `2040656402`).
+6. In Cities: Skylines, enable **Quay Tools** under **Content Manager → Mods**.
+
+UnifiedUI is optional; Quay Tools provides a fallback button when UnifiedUI is unavailable.
+
 ## Building
 
 ### Requirements
