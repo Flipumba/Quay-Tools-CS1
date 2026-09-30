@@ -12,6 +12,10 @@ namespace QuayTools
         public const int DefaultScale = 80; // 8.0 m: width of one repeat of the decal texture
         public const int MinScale = 5;      // 0.5 m
         public const int MaxScale = 1000;   // 100 m
+        public const int MaxStep = 1000;    // 100 m; 0 = automatic (one tile length)
+        public const int DefaultBox = 80;   // 8.0 m: height of the projection box of placed decals
+        public const int MinBox = 5;        // 0.5 m
+        public const int MaxBox = 500;      // 50 m
 
         public int Width = DefaultWidth; // units of FenceStore.Unit (0.1 m)
         public int Lateral;              // sideways shift from the middle of the quay, right of start->end positive
@@ -19,6 +23,8 @@ namespace QuayTools
         public byte R = 255, G = 255, B = 255, A = 255; // tint of a decal (multiplies its colours and opacity), fill colour of a plain path
         public string Prop;            // name of the decal prop (PropInfo); null = plain coloured strip
         public int Scale = DefaultScale; // world width of one repeat of the decal texture, units of 0.1 m
+        public int Step;                 // distance between placed decal tiles along the path, units of 0.1 m; 0 = one tile length
+        public int Box = DefaultBox;     // height (thickness) of the projection box of placed decals, units of 0.1 m
 
         public Color TintColor
         {
@@ -40,12 +46,14 @@ namespace QuayTools
             B = 255;
             A = 255;
             Scale = DefaultScale;
+            Step = 0;
+            Box = DefaultBox;
         }
 
         public bool SameAs(DecalSettings o)
         {
             return o != null && Width == o.Width && Lateral == o.Lateral && Lift == o.Lift && R == o.R && G == o.G && B == o.B && A == o.A &&
-                   Scale == o.Scale && Prop == o.Prop;
+                   Scale == o.Scale && Step == o.Step && Box == o.Box && Prop == o.Prop;
         }
     }
 
@@ -54,6 +62,9 @@ namespace QuayTools
     {
         public const int MinScale = DecalSettings.MinScale;
         public const int MaxScale = DecalSettings.MaxScale;
+        public const int MaxStep = DecalSettings.MaxStep;
+        public const int MinBox = DecalSettings.MinBox;
+        public const int MaxBox = DecalSettings.MaxBox;
         public const int MinWidth = 1;    // 0.1 m
         public const int MaxWidth = 500;  // 50 m
 
@@ -68,7 +79,7 @@ namespace QuayTools
             new Color32(20, 20, 20, 245)     // black
         };
 
-        private const int FormatVersion = 3;
+        private const int FormatVersion = 4;
         private static readonly Dictionary<ushort, DecalSettings> Map = new Dictionary<ushort, DecalSettings>();
 
         /// <summary>Raised (flag) whenever the content changes; the renderer rebuilds its meshes.</summary>
@@ -154,6 +165,8 @@ namespace QuayTools
                         w.Write(s.A);
                         w.Write(s.Prop ?? string.Empty);
                         w.Write(s.Scale);
+                        w.Write(s.Step);
+                        w.Write(s.Box);
                     }
                 }
                 w.Flush();
@@ -204,6 +217,11 @@ namespace QuayTools
                                 string prop = r.ReadString();
                                 s.Prop = string.IsNullOrEmpty(prop) ? null : prop;
                                 s.Scale = Mathf.Clamp(r.ReadInt32(), MinScale, MaxScale);
+                            }
+                            if (version >= 4)
+                            {
+                                s.Step = Mathf.Clamp(r.ReadInt32(), 0, MaxStep);
+                                s.Box = Mathf.Clamp(r.ReadInt32(), MinBox, MaxBox);
                             }
                             Map[id] = s;
                         }

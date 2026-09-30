@@ -290,6 +290,39 @@ namespace QuayTools
             return count == 2 && other != 0;
         }
 
+        /// <summary>
+        /// End point of the neighbour's path at the node (the neighbour is the only other segment of the node). The
+        /// neighbour's corners already contain the Node Controller Renewal edits, so this is where the real surface continues.
+        /// </summary>
+        private static bool NeighbourEnd(ushort id, ushort nodeId, DecalSettings fallback, float baseLift, out Vector3 point)
+        {
+            point = Vector3.zero;
+            if (nodeId == 0) return false;
+
+            NetManager nm = NetManager.instance;
+            NetNode node = nm.m_nodes.m_buffer[nodeId];
+            ushort other = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                ushort seg = node.GetSegment(i);
+                if (seg != 0 && seg != id) other = seg;
+            }
+            if (other == 0) return false;
+
+            Corners oc;
+            if (!ReadCorners(other, out oc)) return false;
+
+            DecalSettings os;
+            if (!DecalStore.TryGet(other, out os)) os = fallback;
+
+            Vector3[] T = new Vector3[4];
+            bool wr = QuayGeometry.GetFrame(other).WaterIsRight;
+            if (!CornerControlPoints(oc, os, baseLift + os.Lift * FenceStore.Unit, wr, T)) return false;
+
+            point = nm.m_segments.m_buffer[other].m_startNode == nodeId ? T[0] : T[3];
+            return true;
+        }
+
         /// <summary>Adds a straight piece at the start and/or the end of the path (up to the node).</summary>
         private static void Extend(Path path, Vector3? atStart, Vector3? atEnd)
         {
@@ -401,18 +434,37 @@ namespace QuayTools
                 {
                     NetNode[] nodes = NetManager.instance.m_nodes.m_buffer;
                     Vector3? qs = null, qe = null;
+                    float baseLift = prop != null ? DecalLift : SolidLift;
                     if (item.BridgeStart)
                     {
-                        Vector3 q = nodes[seg.m_startNode].m_position + (P[0] - (c.sL + c.sR) * 0.5f);
-                        q.y = P[0].y;
+                        Vector3 po;
+                        Vector3 q;
+                        if (NeighbourEnd(id, seg.m_startNode, item.Settings, baseLift, out po))
+                        {
+                            q = (P[0] + po) * 0.5f; // both segments continue to the middle of the gap between their ends
+                        }
+                        else
+                        {
+                            q = nodes[seg.m_startNode].m_position + (P[0] - (c.sL + c.sR) * 0.5f);
+                            q.y = P[0].y;
+                        }
                         Vector3 d = q - P[0];
                         d.y = 0f;
                         if (d.sqrMagnitude > 0.0025f) qs = q;
                     }
                     if (item.BridgeEnd)
                     {
-                        Vector3 q = nodes[seg.m_endNode].m_position + (P[3] - (c.eL + c.eR) * 0.5f);
-                        q.y = P[3].y;
+                        Vector3 po;
+                        Vector3 q;
+                        if (NeighbourEnd(id, seg.m_endNode, item.Settings, baseLift, out po))
+                        {
+                            q = (P[3] + po) * 0.5f;
+                        }
+                        else
+                        {
+                            q = nodes[seg.m_endNode].m_position + (P[3] - (c.eL + c.eR) * 0.5f);
+                            q.y = P[3].y;
+                        }
                         Vector3 d = q - P[3];
                         d.y = 0f;
                         if (d.sqrMagnitude > 0.0025f) qe = q;
@@ -425,7 +477,7 @@ namespace QuayTools
                 item.Placed = prop != null && Settings.DecalPlaced;
                 if (item.Placed)
                 {
-                    item.Tiles = BuildTiles(path, width, item.Settings.Scale * FenceStore.Unit, prop);
+                    item.Tiles = BuildTiles(path, width, item.Settings.Scale * FenceStore.Unit, item.Settings.Step * FenceStore.Unit, item.Settings.Box * FenceStore.Unit, prop);
                     if (item.Mesh != null) item.Mesh.Clear();
                     if (_diagnostics < 8 || !item.Logged)
                     {
@@ -678,7 +730,7 @@ namespace QuayTools
         /// prop instance (the game's decal shader projects the texture onto whatever is inside the tile's box, so heights,
         /// slopes and node edits are followed by the surface itself). No mask cropping: the footprint is the tile grid.
         /// </summary>
-        private static List<Matrix4x4> BuildTiles(Path path, float width, float tile, PropInfo prop)
+        private static List<Matrix4x4> BuildTiles(Path path, float width, float tile, float step, float boxHeight, PropInfo prop)
         {
             Bounds b = prop.m_mesh.bounds;
             Vector3 size = b.size;
@@ -686,21 +738,23 @@ namespace QuayTools
             float len = path.Length;
 
             int cols = 1, rows = 1;
-            float tileW = width, tileL = len;
+            float tileW = width, tileL = len, spacing = len;
             for (int attempt = 0; attempt < 16; attempt++)
             {
                 cols = Mathf.Max(1, Mathf.RoundToInt(width / tile));
                 tileW = width / cols;
                 float tl = tile * aspect;
-                rows = Mathf.Max(1, Mathf.RoundToInt(len / tl));
-                tileL = len / rows;
+                rows = Mathf.Max(1, Mathf.RoundToInt(len / (step > 0.01f ? step : tl)));
+                spacing = len / rows;
+                tileL = step > 0.01f ? tl : spacing; // with an own step the tile keeps its size (gaps or overlaps), otherwise tiles touch
                 if ((long)cols * rows <= MaxTiles) break;
                 tile *= 1.5f;
+                if (step > 0.01f) step *= 1.5f;
             }
 
             float sx = size.x > 0.01f ? tileW / size.x : 1f;
             float sz = size.z > 0.01f ? tileL / size.z : 1f;
-            float sy = size.y > 0.1f ? Mathf.Clamp(8f / size.y, 1f, 20f) : 1f; // box about 8 m tall around the surface
+            float sy = size.y > 0.1f ? Mathf.Clamp(boxHeight / size.y, 0.02f, 100f) : 1f; // height of the projection box around the surface
             Vector3 scale = new Vector3(sx, sy, sz);
             Matrix4x4 centre = Matrix4x4.TRS(-b.center, Quaternion.identity, Vector3.one);
 
@@ -709,7 +763,7 @@ namespace QuayTools
             for (int r = 0; r < rows; r++)
             {
                 Vector3 pos, left;
-                path.Eval((r + 0.5f) * tileL, out pos, out left);
+                path.Eval((r + 0.5f) * spacing, out pos, out left);
                 Vector3 fwd = Vector3.Cross(Vector3.up, left);
                 if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
                 Quaternion rot = Quaternion.LookRotation(fwd, Vector3.up);

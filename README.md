@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.3.4**
+**Version: v0.3.5**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -175,6 +175,10 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.3.5
+- New sliders for placed decals: **Decal step** (distance between tiles along the path, 0 = one tile length so tiles touch; a larger value leaves gaps, a smaller one overlaps them) and **Decal box height** (thickness of the projection box, default 8 m: it decides how far above and below the path the decal is projected onto the surface).
+- Node Controller Renewal nodes: the gap between two segment ends is now bridged using the neighbour's real path end point (both paths meet in the middle of the gap, at its height and position) instead of a flat extension to the node centre. The corners used already contain the NCR edits, because NCR replaces the game's corner calculation that the mod reads.
 
 ### v0.3.4
 - Decals are now placed step by step along the path as real game decal props (tile matrices, the way the game draws decal props). The previous approach drew one flat mesh with the game material, which the game's decal shader does not display. No mask cropping in this mode; the old textured strip is still available in the mod option **Decal path rendering**.

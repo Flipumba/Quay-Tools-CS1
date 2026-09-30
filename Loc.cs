@@ -44,6 +44,8 @@ namespace QuayTools
             { "dscale",        new[] { "Decal scale (tile)", "Масштаб декали (тайл)" } },
             { "dwidth",        new[] { "Mask width", "Ширина маски" } },
             { "dlateral",      new[] { "Sideways shift (+ toward water)", "Сдвиг вбок (+ к воде)" } },
+            { "dstep",         new[] { "Decal step (0 = tile size)", "Шаг декалей (0 = размер тайла)" } },
+            { "dbox",          new[] { "Decal box height (thickness)", "Высота бокса декали (толщина)" } },
             { "dlift",         new[] { "Height offset (+ up)", "Высота (+ вверх)" } },
             { "dcolor",        new[] { "Tint (colour, RGBA)", "Оттенок (RGBA)" } },
             { "decal_add",     new[] { "Add / apply path", "Добавить / применить дорожку" } },

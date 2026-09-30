@@ -69,8 +69,8 @@ namespace QuayTools
         private UIPanel _decal;
         private float _decalHeight;
         private UILabel _decalSel, _decalState;
-        private UISlider _dWidth, _dScale, _dLateral, _dLift;
-        private UITextField _dWidthV, _dScaleV, _dLateralV, _dLiftV;
+        private UISlider _dWidth, _dScale, _dLateral, _dLift, _dStep, _dBox;
+        private UITextField _dWidthV, _dScaleV, _dLateralV, _dLiftV, _dStepV, _dBoxV;
         private PickerUi _decalUi;
         private UISlider[] _dRgba;     // R, G, B, A
         private UILabel[] _dRgbaV;
@@ -913,6 +913,10 @@ namespace QuayTools
                 delegate (int u) { OnDecalValue("width", u, delegate (DecalSettings d, int v) { d.Width = v; }); });
             y = MakeValueRow(_decal, y, "dscale", DecalStore.MinScale, DecalStore.MaxScale, DecalSettings.DefaultScale, out _dScale, out _dScaleV,
                 delegate (int u) { OnDecalValue("scale", u, delegate (DecalSettings d, int v) { d.Scale = v; }); });
+            y = MakeValueRow(_decal, y, "dstep", 0, DecalStore.MaxStep, 0f, out _dStep, out _dStepV,
+                delegate (int u) { OnDecalValue("step", u, delegate (DecalSettings d, int v) { d.Step = v; }); });
+            y = MakeValueRow(_decal, y, "dbox", DecalStore.MinBox, DecalStore.MaxBox, DecalSettings.DefaultBox, out _dBox, out _dBoxV,
+                delegate (int u) { OnDecalValue("box", u, delegate (DecalSettings d, int v) { d.Box = v; }); });
             y = MakeValueRow(_decal, y, "dlateral", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _dLateral, out _dLateralV,
                 delegate (int u) { OnDecalValue("lateral", u, delegate (DecalSettings d, int v) { d.Lateral = v; }); });
             y = MakeValueRow(_decal, y, "dlift", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _dLift, out _dLiftV,
@@ -1192,6 +1196,10 @@ namespace QuayTools
 
                     _dWidth.value = first.Width;
                     _dScale.value = first.Scale;
+                    _brush.Step = first.Step;
+                    _brush.Box = first.Box;
+                    _dStep.value = first.Step;
+                    _dBox.value = first.Box;
                     _dLateral.value = first.Lateral;
                     _dLift.value = first.Lift;
                     UpdateColorUi();
@@ -1199,6 +1207,8 @@ namespace QuayTools
 
                 _dWidthV.text = FormatOffset(_dWidth.value);
                 _dScaleV.text = FormatOffset(_dScale.value);
+                _dStepV.text = FormatOffset(_dStep.value);
+                _dBoxV.text = FormatOffset(_dBox.value);
                 _dLateralV.text = FormatOffset(_dLateral.value);
                 _dLiftV.text = FormatOffset(_dLift.value);
                 ShowBrushHeader();
@@ -1222,6 +1232,10 @@ namespace QuayTools
                 _dWidth.value = _brush.Width;
                 _dScale.value = _brush.Scale;
                 _dScaleV.text = FormatOffset(_dScale.value);
+                _dStep.value = _brush.Step;
+                _dStepV.text = FormatOffset(_dStep.value);
+                _dBox.value = _brush.Box;
+                _dBoxV.text = FormatOffset(_dBox.value);
                 _dLateral.value = _brush.Lateral;
                 _dLift.value = _brush.Lift;
                 _dWidthV.text = FormatOffset(_dWidth.value);
@@ -1239,6 +1253,8 @@ namespace QuayTools
         {
             _dWidth.isEnabled = enabled;
             _dScale.isEnabled = enabled;
+            _dStep.isEnabled = enabled;
+            _dBox.isEnabled = enabled;
             _decalUi.Header.isEnabled = enabled;
             _dLateral.isEnabled = enabled;
             _dLift.isEnabled = enabled;
@@ -1323,7 +1339,7 @@ namespace QuayTools
             get
             {
                 if (!_built) return false;
-                UITextField[] fields = { _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dLateralV, _dLiftV, _dHex };
+                UITextField[] fields = { _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dHex };
                 for (int i = 0; i < fields.Length; i++)
                 {
                     if (fields[i] != null && fields[i].hasFocus) return true;
