@@ -72,78 +72,68 @@ namespace QuayTools
         }
 
         /// <summary>
-        /// Main thread (render). Recomputes the fence ribbon exactly like NetSegment.RefreshRoadFence does, but from
-        /// corners that went through our adjustment, so it also works when other mods reshape the node corners.
+        /// Main thread (render). Rebuilds the fence ribbon of one of our segments. The fence line is taken from the
+        /// quay surface itself: the two edge curves of the segment (built from the real, possibly mod-changed corners)
+        /// are blended at the fence's lateral position, so the fence follows the model exactly.
         /// </summary>
         public static void Rebuild(ref NetSegment segment, ushort segmentId, NetInfo info, NetInfo fenceInfo,
                                    ref RenderManager.Instance data, bool leftFence)
         {
             Drain();
 
-            int savedDepth = Patches.FenceContext.Depth;
-            Patches.FenceContext.Depth = 0; // we adjust the corners ourselves below
-            Vector3 p8 = Vector3.zero, p9 = Vector3.zero, p10 = Vector3.zero, p11 = Vector3.zero;
-            Vector3 d8 = Vector3.zero, d9 = Vector3.zero, d10 = Vector3.zero, d11 = Vector3.zero;
-            bool sStart = false, sEnd = false, tmp = false;
-            try
-            {
-                float offset = info.m_netAI.GetFencePosition(leftFence);
-                segment.CalculateCorner(segmentId, true, true, true, out p8, out d8, out sStart, offset);
-                segment.CalculateCorner(segmentId, true, false, false, out p10, out d10, out sEnd, offset);
-                segment.CalculateCorner(segmentId, true, true, false, out p9, out d9, out tmp, offset);
-                segment.CalculateCorner(segmentId, true, false, true, out p11, out d11, out tmp, offset);
-            }
-            finally
-            {
-                Patches.FenceContext.Depth = savedDepth;
-            }
+            // The game's "left fence" slot is drawn on the geometric right side.
+            bool geometricRight = leftFence;
 
-            FenceStore.TryAdjustCorner(segmentId, true, true, ref p8);
-            FenceStore.TryAdjustCorner(segmentId, false, false, ref p10);
-            FenceStore.TryAdjustCorner(segmentId, true, false, ref p9);
-            FenceStore.TryAdjustCorner(segmentId, false, true, ref p11);
+            float t, lateralMeters, dy;
+            if (!FenceStore.TryGetLine(segmentId, geometricRight, out t, out lateralMeters, out dy)) return;
+
+            Vector3 sL, sR, eL, eR, dSL, dSR, dEL, dER;
+            bool smSL, smSR, smEL, smER;
+            FenceStore.GetRawCorner(segmentId, true, true, out sL, out dSL, out smSL);
+            FenceStore.GetRawCorner(segmentId, true, false, out sR, out dSR, out smSR);
+            FenceStore.GetRawCorner(segmentId, false, false, out eL, out dEL, out smEL); // geometric left at the end node
+            FenceStore.GetRawCorner(segmentId, false, true, out eR, out dER, out smER);  // geometric right at the end node
+
+            Vector3 mL1, mL2, mR1, mR2;
+            NetSegment.CalculateMiddlePoints(sL, dSL, eL, dEL, smSL, smEL, out mL1, out mL2);
+            NetSegment.CalculateMiddlePoints(sR, dSR, eR, dER, smSR, smER, out mR1, out mR2);
+
+            Vector3[] left = { sL, mL1, mL2, eL };
+            Vector3[] right = { sR, mR1, mR2, eR };
+            Vector3[] P = new Vector3[4];
+            for (int i = 0; i < 4; i++)
+            {
+                P[i] = Vector3.Lerp(left[i], right[i], t);
+                Vector3 lat = right[i] - left[i];
+                lat.y = 0f;
+                if (lat.sqrMagnitude > 1e-6f) P[i] += lat.normalized * lateralMeters;
+                P[i].y += dy;
+            }
 
             float hw = fenceInfo.m_halfWidth;
-            Vector3 p18, p19, p20, p21;
-            Vector3 lineStart, lineEnd;
-            if (leftFence)
+            Vector3[] tangent = { P[1] - P[0], P[2] - P[0], P[3] - P[1], P[3] - P[2] };
+            Vector3[] A = new Vector3[4]; // left edge of the ribbon
+            Vector3[] B = new Vector3[4]; // right edge of the ribbon
+            for (int i = 0; i < 4; i++)
             {
-                Vector3 n24 = Vector3.Cross(d9, Vector3.up).normalized;
-                Vector3 n22 = Vector3.Cross(d11, Vector3.up).normalized;
-                p18 = p9 + n24 * hw;
-                p19 = p9 - n24 * hw;
-                p20 = p11 - n22 * hw;
-                p21 = p11 + n22 * hw;
-                lineStart = p9;
-                lineEnd = p11;
+                Vector3 n = Vector3.Cross(tangent[i], Vector3.up);
+                n.y = 0f;
+                n = n.sqrMagnitude > 1e-8f ? n.normalized : Vector3.zero;
+                A[i] = P[i] + n * hw;
+                B[i] = P[i] - n * hw;
             }
-            else
-            {
-                Vector3 n26 = Vector3.Cross(d8, Vector3.up).normalized;
-                Vector3 n28 = Vector3.Cross(d10, Vector3.up).normalized;
-                p18 = p8 + n26 * hw;
-                p19 = p8 - n26 * hw;
-                p20 = p10 - n28 * hw;
-                p21 = p10 + n28 * hw;
-                lineStart = p8;
-                lineEnd = p10;
-            }
-
-            Vector3 m30 = Vector3.zero, m31 = Vector3.zero, m32 = Vector3.zero, m33 = Vector3.zero;
-            NetSegment.CalculateMiddlePoints(p18, d8, p20, d10, sStart, sEnd, out m30, out m31);
-            NetSegment.CalculateMiddlePoints(p19, d9, p21, d11, sStart, sEnd, out m32, out m33);
 
             float vScale = fenceInfo.m_netAI.GetVScale();
-            data.m_dataMatrix0 = NetSegment.CalculateControlMatrix(p18, m30, m31, p20, p19, m32, m33, p21, data.m_position, vScale);
-            data.m_dataMatrix1 = NetSegment.CalculateControlMatrix(p19, m32, m33, p21, p18, m30, m31, p20, data.m_position, vScale);
+            data.m_dataMatrix0 = NetSegment.CalculateControlMatrix(A[0], A[1], A[2], A[3], B[0], B[1], B[2], B[3], data.m_position, vScale);
+            data.m_dataMatrix1 = NetSegment.CalculateControlMatrix(B[0], B[1], B[2], B[3], A[0], A[1], A[2], A[3], data.m_position, vScale);
 
             if (fenceInfo.m_requireHeightMap)
             {
                 Bezier3 line = new Bezier3();
-                line.a = lineStart;
-                line.d = lineEnd;
-                line.b = (m30 + m32) * 0.5f;
-                line.c = (m31 + m33) * 0.5f;
+                line.a = P[0];
+                line.b = P[1];
+                line.c = P[2];
+                line.d = P[3];
                 ApplyHeightMap(segmentId * 2 + (leftFence ? 1 : 0), line, hw + 6f, ref data);
             }
         }
