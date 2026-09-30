@@ -10,7 +10,7 @@ namespace QuayTools
     /// The path is a mask: a strip of the chosen width, built from the two edge curves of the segment (the real node
     /// corners, so node edits made with other mods are followed) blended at the middle, so it follows curves and heights.
     /// A decal prop is laid over the strip: its texture is repeated along and across the strip in tiles of the chosen
-    /// size and cropped by the strip edges, and drawn with the prop's own material and the chosen tint.
+    /// size and cropped by the strip edges, and drawn with the chosen tint (composite unlit texture by default, or the prop's own material as an option).
     /// Without a decal the strip is a plain coloured surface. One mesh per segment, drawn with Graphics.DrawMesh.
     /// Main thread only. Lives on the QuayToolsController game object.
     /// </summary>
@@ -23,6 +23,7 @@ namespace QuayTools
         private const int MaxBuildsPerFrame = 12;
         private const int ChecksPerFrame = 6;
         private const float RetrySeconds = 3f;
+        private const int MaxTiles = 1500;         // placed decals per segment
 
         private struct Corners
         {
@@ -54,19 +55,26 @@ namespace QuayTools
             public bool Logged;
             public bool FailLogged;
             public bool BridgeStart, BridgeEnd; // path continues across the node to the neighbour segment
+            public List<Matrix4x4> Tiles;   // placed game decals (one matrix per tile)
+            public bool Placed;
+            public bool WaterRight;      // water side of the segment when built (the sideways shift is signed toward water)
         }
 
         private readonly Dictionary<ushort, Item> _items = new Dictionary<ushort, Item>();
         private readonly List<ushort> _ids = new List<ushort>();
         private readonly List<ushort> _dead = new List<ushort>();
         private readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
-        private Material[] _materials;
+        private Material _plain;
         private readonly Dictionary<PropInfo, Material> _simple = new Dictionary<PropInfo, Material>();
+        private readonly Dictionary<PropInfo, Texture2D> _composite = new Dictionary<PropInfo, Texture2D>();
+        private readonly HashSet<PropInfo> _compositeFailed = new HashSet<PropInfo>();
         private Shader _shader;
         private bool _shaderSearched;
+        private bool _shaderLit;
         private int _version = -1;
         private int _cursor;
         private int _diagnostics;
+        private int _gapLogs;
 
         private void OnDestroy()
         {
@@ -76,19 +84,19 @@ namespace QuayTools
             }
             _items.Clear();
 
-            if (_materials != null)
-            {
-                for (int i = 0; i < _materials.Length; i++)
-                {
-                    if (_materials[i] != null) Destroy(_materials[i]);
-                }
-            }
+            if (_plain != null) Destroy(_plain);
 
             foreach (KeyValuePair<PropInfo, Material> kv in _simple)
             {
                 if (kv.Value != null) Destroy(kv.Value);
             }
             _simple.Clear();
+
+            foreach (KeyValuePair<PropInfo, Texture2D> kv in _composite)
+            {
+                if (kv.Value != null) Destroy(kv.Value);
+            }
+            _composite.Clear();
         }
 
         private void Update()
@@ -136,6 +144,12 @@ namespace QuayTools
 
                 // a neighbour got or lost its path: the bridge across the node changes
                 if (BridgeAt(id, segs[id].m_startNode) != item.BridgeStart || BridgeAt(id, segs[id].m_endNode) != item.BridgeEnd) item.Dirty = true;
+
+                // the segment was inverted: the water is on the other side now, the sideways shift follows it
+                if (QuayGeometry.GetFrame(id).WaterIsRight != item.WaterRight) item.Dirty = true;
+
+                // the rendering mode was changed in the options
+                if (item.Prop != null && item.Placed != Settings.DecalPlaced) item.Dirty = true;
             }
             for (int i = 0; i < _dead.Count; i++) DecalStore.Remove(_dead[i]);
 
@@ -206,7 +220,7 @@ namespace QuayTools
         }
 
         /// <summary>Bezier control points of the path centre line from the four real corners of the segment.</summary>
-        private static bool CornerControlPoints(Corners c, DecalSettings s, float lift, Vector3[] P)
+        private static bool CornerControlPoints(Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] P)
         {
             Vector3 mL1, mL2, mR1, mR2;
             NetSegment.CalculateMiddlePoints(c.sL, c.dSL, c.eL, c.dEL, c.smSL, c.smEL, out mL1, out mL2);
@@ -214,14 +228,19 @@ namespace QuayTools
 
             Vector3[] left = { c.sL, mL1, mL2, c.eL };
             Vector3[] right = { c.sR, mR1, mR2, c.eR };
-            float lateral = s.Lateral * FenceStore.Unit;
+            float lateral = s.Lateral * FenceStore.Unit * (waterRight ? 1f : -1f); // + toward the water
 
             for (int i = 0; i < 4; i++)
             {
-                P[i] = Vector3.Lerp(left[i], right[i], 0.5f);
-                Vector3 lat = right[i] - left[i];
-                lat.y = 0f;
-                if (lat.sqrMagnitude > 1e-6f) P[i] += lat.normalized * lateral;
+                // the shift is a change of the blend parameter between the two edge curves, so the path stays on the
+                // surface between them (heights, cross slope and twist included)
+                Vector3 span = right[i] - left[i];
+                Vector3 flat = span;
+                flat.y = 0f;
+                float w = flat.magnitude;
+                float t = 0.5f;
+                if (w > 0.05f) t = Mathf.Clamp(0.5f + lateral / w, -1f, 2f);
+                P[i] = left[i] + span * t;
                 P[i].y += lift;
                 if (!Finite(P[i])) return false;
             }
@@ -229,7 +248,7 @@ namespace QuayTools
         }
 
         /// <summary>Fallback when the corners are unusable: the centre line between the two nodes.</summary>
-        private static void NodeControlPoints(ushort id, DecalSettings s, float lift, Vector3[] P)
+        private static void NodeControlPoints(ushort id, DecalSettings s, float lift, bool waterRight, Vector3[] P)
         {
             NetManager nm = NetManager.instance;
             NetSegment seg = nm.m_segments.m_buffer[id];
@@ -239,7 +258,7 @@ namespace QuayTools
             NetSegment.CalculateMiddlePoints(a, seg.m_startDirection, d, seg.m_endDirection, false, false, out b, out c);
 
             Vector3[] pts = { a, b, c, d };
-            float lateral = s.Lateral * FenceStore.Unit;
+            float lateral = s.Lateral * FenceStore.Unit * (waterRight ? 1f : -1f);
             for (int i = 0; i < 4; i++)
             {
                 Vector3 dir = i < 3 ? pts[i + 1] - pts[i] : pts[3] - pts[2];
@@ -251,9 +270,9 @@ namespace QuayTools
         }
 
         /// <summary>
-        /// True when the node joins exactly two segments and the other one has a decal path as well. Segment ends can
+        /// True when the node joins exactly two segments. Segment ends can
         /// be moved away from the node (Node Controller Renewal); the node area between the two ends is then part of no
-        /// segment, so each path is continued up to the node.
+        /// segment, so the path is continued up to the node (the neighbour does the same from its side).
         /// </summary>
         private static bool BridgeAt(ushort id, ushort nodeId)
         {
@@ -268,7 +287,7 @@ namespace QuayTools
                 count++;
                 if (seg != id) other = seg;
             }
-            return count == 2 && other != 0 && DecalStore.Has(other);
+            return count == 2 && other != 0;
         }
 
         /// <summary>Adds a straight piece at the start and/or the end of the path (up to the node).</summary>
@@ -337,15 +356,17 @@ namespace QuayTools
 
                 float lift = (prop != null ? DecalLift : SolidLift) + item.Settings.Lift * FenceStore.Unit;
                 Vector3[] P = new Vector3[4];
+                bool waterRight = QuayGeometry.GetFrame(id).WaterIsRight;
+                item.WaterRight = waterRight;
 
                 Corners c;
                 bool ok = ReadCorners(id, out c);
                 if (ok) item.Last = c;
-                ok = ok && CornerControlPoints(c, item.Settings, lift, P);
+                ok = ok && CornerControlPoints(c, item.Settings, lift, waterRight, P);
                 if (!ok)
                 {
                     // corners unusable (edited node in an unusual state): use the node centre line so something is shown
-                    NodeControlPoints(id, item.Settings, lift, P);
+                    NodeControlPoints(id, item.Settings, lift, waterRight, P);
                     Debug.LogWarning("[QuayTools] Decal path on segment " + id + ": segment corners are not usable, using the node centre line");
                 }
 
@@ -363,6 +384,19 @@ namespace QuayTools
                 NetSegment seg = NetManager.instance.m_segments.m_buffer[id];
                 item.BridgeStart = BridgeAt(id, seg.m_startNode);
                 item.BridgeEnd = BridgeAt(id, seg.m_endNode);
+                if (ok && _gapLogs < 24)
+                {
+                    NetNode[] nn = NetManager.instance.m_nodes.m_buffer;
+                    Vector3 ms = (c.sL + c.sR) * 0.5f, me = (c.eL + c.eR) * 0.5f;
+                    Vector3 gs = nn[seg.m_startNode].m_position - ms, ge = nn[seg.m_endNode].m_position - me;
+                    float hs = new Vector2(gs.x, gs.z).magnitude, he = new Vector2(ge.x, ge.z).magnitude;
+                    if (hs > 0.3f || he > 0.3f || Mathf.Abs(gs.y) > 0.3f || Mathf.Abs(ge.y) > 0.3f)
+                    {
+                        _gapLogs++;
+                        Debug.Log("[QuayTools] Segment " + id + " ends are away from the nodes: start " + hs.ToString("0.0") + " m (dy " + gs.y.ToString("0.0") + ", bridge " + item.BridgeStart +
+                            "), end " + he.ToString("0.0") + " m (dy " + ge.y.ToString("0.0") + ", bridge " + item.BridgeEnd + ")");
+                    }
+                }
                 if (ok && (item.BridgeStart || item.BridgeEnd))
                 {
                     NetNode[] nodes = NetManager.instance.m_nodes.m_buffer;
@@ -387,6 +421,22 @@ namespace QuayTools
                 }
 
                 float width = Mathf.Clamp(item.Settings.Width, DecalStore.MinWidth, DecalStore.MaxWidth) * FenceStore.Unit;
+
+                item.Placed = prop != null && Settings.DecalPlaced;
+                if (item.Placed)
+                {
+                    item.Tiles = BuildTiles(path, width, item.Settings.Scale * FenceStore.Unit, prop);
+                    if (item.Mesh != null) item.Mesh.Clear();
+                    if (_diagnostics < 8 || !item.Logged)
+                    {
+                        if (_diagnostics < 8) Debug.Log("[QuayTools] Decal path placed: segment " + id + ", length " + path.Length.ToString("0.0") + " m, " + item.Tiles.Count + " tiles, decal " + prop.name +
+                            ", mesh size " + prop.m_mesh.bounds.size + ", centre " + prop.m_mesh.bounds.center);
+                        _diagnostics++;
+                        item.Logged = true;
+                    }
+                    return;
+                }
+                item.Tiles = null;
 
                 if (item.Mesh == null)
                 {
@@ -623,37 +673,78 @@ namespace QuayTools
             return m;
         }
 
+        /// <summary>
+        /// Game decals placed step by step: tiles of the decal prop along the path, each drawn with its own matrix like a
+        /// prop instance (the game's decal shader projects the texture onto whatever is inside the tile's box, so heights,
+        /// slopes and node edits are followed by the surface itself). No mask cropping: the footprint is the tile grid.
+        /// </summary>
+        private static List<Matrix4x4> BuildTiles(Path path, float width, float tile, PropInfo prop)
+        {
+            Bounds b = prop.m_mesh.bounds;
+            Vector3 size = b.size;
+            float aspect = size.x > 0.01f && size.z > 0.01f ? size.z / size.x : 1f;
+            float len = path.Length;
+
+            int cols = 1, rows = 1;
+            float tileW = width, tileL = len;
+            for (int attempt = 0; attempt < 16; attempt++)
+            {
+                cols = Mathf.Max(1, Mathf.RoundToInt(width / tile));
+                tileW = width / cols;
+                float tl = tile * aspect;
+                rows = Mathf.Max(1, Mathf.RoundToInt(len / tl));
+                tileL = len / rows;
+                if ((long)cols * rows <= MaxTiles) break;
+                tile *= 1.5f;
+            }
+
+            float sx = size.x > 0.01f ? tileW / size.x : 1f;
+            float sz = size.z > 0.01f ? tileL / size.z : 1f;
+            float sy = size.y > 0.1f ? Mathf.Clamp(8f / size.y, 1f, 20f) : 1f; // box about 8 m tall around the surface
+            Vector3 scale = new Vector3(sx, sy, sz);
+            Matrix4x4 centre = Matrix4x4.TRS(-b.center, Quaternion.identity, Vector3.one);
+
+            List<Matrix4x4> tiles = new List<Matrix4x4>(cols * rows);
+            path.ResetCursor();
+            for (int r = 0; r < rows; r++)
+            {
+                Vector3 pos, left;
+                path.Eval((r + 0.5f) * tileL, out pos, out left);
+                Vector3 fwd = Vector3.Cross(Vector3.up, left);
+                if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
+                Quaternion rot = Quaternion.LookRotation(fwd, Vector3.up);
+
+                for (int c = 0; c < cols; c++)
+                {
+                    float x = (c - (cols - 1) * 0.5f) * tileW; // right positive
+                    Vector3 p = pos - left * x;
+                    tiles.Add(Matrix4x4.TRS(p, rot, scale) * centre);
+                }
+            }
+            return tiles;
+        }
+
         // ---------- drawing ----------
 
         private void Draw()
         {
             PropManager pm = null;
+            EnsureShader(); // also switches the materials when the shadow option changed
+            bool receive = _shaderLit;
             for (int i = 0; i < _ids.Count; i++)
             {
                 Item item = _items[_ids[i]];
-                if (item.Mesh == null || item.Failed) continue;
+                if (item.Failed) continue;
 
-                Color tint = DecalStore.Colors[Mathf.Clamp(item.Settings.ColorIndex, 0, DecalStore.Colors.Length - 1)];
+                Color tint = item.Settings.TintColor;
 
-                if (item.Prop != null)
+                if (item.Prop != null && item.Placed)
                 {
                     PropInfo info = item.Prop;
-                    if (info.m_material == null) continue;
+                    if (item.Tiles == null || info.m_material == null || info.m_mesh == null) continue;
                     if (pm == null) pm = Singleton<PropManager>.instance;
 
-                    if (Settings.DecalSimpleRendering)
-                    {
-                        Material simple = GetSimpleMaterial(info);
-                        if (simple == null) continue;
-                        tint.a = 1f;
-                        _block.Clear();
-                        _block.SetColor("_Color", tint);
-                        Graphics.DrawMesh(item.Mesh, Matrix4x4.identity, simple, 0, null, 0, _block, false, false);
-                        continue;
-                    }
-
-                    // the same call and material parameters the game uses for a decal prop
-                    tint.a = 1f;
+                    // the same call and material parameters the game uses for a decal prop instance
                     _block.Clear();
                     _block.SetColor(pm.ID_Color, tint);
                     _block.SetVector(pm.ID_ObjectIndex, RenderManager.DefaultColorLocation);
@@ -662,43 +753,87 @@ namespace QuayTools
                         info.m_material.SetVectorArray(pm.ID_RollLocation, info.m_rollLocation);
                         info.m_material.SetVectorArray(pm.ID_RollParams, info.m_rollParams);
                     }
-                    Graphics.DrawMesh(item.Mesh, Matrix4x4.identity, info.m_material, info.m_prefabDataLayer, null, 0, _block);
+                    for (int k = 0; k < item.Tiles.Count; k++)
+                    {
+                        Graphics.DrawMesh(info.m_mesh, item.Tiles[k], info.m_material, info.m_prefabDataLayer, null, 0, _block);
+                    }
+                    continue;
+                }
+
+                if (item.Mesh == null) continue;
+
+                if (item.Prop != null)
+                {
+                    PropInfo info = item.Prop;
+                    if (info.m_material == null) continue;
+
+                    Material simple = GetCompositeMaterial(info);
+                    if (simple == null) continue;
+                    _block.Clear();
+                    _block.SetColor("_Color", tint);
+                    Graphics.DrawMesh(item.Mesh, Matrix4x4.identity, simple, 0, null, 0, _block, false, receive); // never casts shadows
                 }
                 else
                 {
-                    Material m = GetMaterial(item.Settings.ColorIndex);
+                    Material m = GetPlainMaterial();
                     if (m == null) continue; // no usable shader, already logged
-                    Graphics.DrawMesh(item.Mesh, Matrix4x4.identity, m, 0, null, 0, null, false, false);
+                    _block.Clear();
+                    _block.SetColor("_Color", tint);
+                    Graphics.DrawMesh(item.Mesh, Matrix4x4.identity, m, 0, null, 0, _block, false, receive);
                 }
             }
         }
 
         private Shader EnsureShader()
         {
+            bool lit = Settings.DecalReceiveShadows;
+            if (_shaderSearched && lit != _shaderLit)
+            {
+                // the option was changed: start again with the other kind of shader
+                if (_plain != null) Destroy(_plain);
+                _plain = null;
+                foreach (KeyValuePair<PropInfo, Material> kv in _simple)
+                {
+                    if (kv.Value != null) Destroy(kv.Value);
+                }
+                _simple.Clear();
+                _shader = null;
+                _shaderSearched = false;
+            }
+
             if (!_shaderSearched)
             {
                 _shaderSearched = true;
-                string[] names = { "Sprites/Default", "Hidden/Internal-Colored", "UI/Default", "Unlit/Color", "Legacy Shaders/Transparent/Diffuse" };
+                _shaderLit = lit;
+                string[] names = lit
+                    ? new[] { "Legacy Shaders/Transparent/Diffuse", "Sprites/Default", "Hidden/Internal-Colored", "UI/Default", "Unlit/Color" }
+                    : new[] { "Sprites/Default", "Hidden/Internal-Colored", "UI/Default", "Unlit/Color", "Legacy Shaders/Transparent/Diffuse" };
                 for (int i = 0; i < names.Length && _shader == null; i++)
                 {
                     _shader = Shader.Find(names[i]);
                 }
 
                 if (_shader == null) Debug.LogError("[QuayTools] Decal paths: no usable shader found (tried Sprites/Default, Hidden/Internal-Colored, UI/Default, Unlit/Color, Legacy Shaders/Transparent/Diffuse)");
-                else Debug.Log("[QuayTools] Plain decal strips and simple decal rendering use shader " + _shader.name);
+                else Debug.Log("[QuayTools] Decal strips use shader " + _shader.name + (lit ? " (receive shadows)" : " (unlit)"));
             }
             return _shader;
         }
 
-        /// <summary>Simple rendering: the decal's main texture on a plain unlit material (tint through _Color).</summary>
-        private Material GetSimpleMaterial(PropInfo info)
+        /// <summary>
+        /// Default rendering: an unlit material with a texture composed from the decal prop (rgb from the diffuse map,
+        /// opacity from the R channel of the ACI map), tint through _Color.
+        /// </summary>
+        private Material GetCompositeMaterial(PropInfo info)
         {
             Material m;
             if (_simple.TryGetValue(info, out m) && m != null) return m;
             if (EnsureShader() == null) return null;
 
+            Texture tex = GetCompositeTexture(info);
+            if (tex == null) tex = info.m_material.mainTexture;
+
             m = new Material(_shader);
-            m.mainTexture = info.m_material.mainTexture;
+            m.mainTexture = tex;
             m.renderQueue = 3000;
             if (m.HasProperty("_Cull")) m.SetInt("_Cull", 0);
             if (m.HasProperty("_ZWrite")) m.SetInt("_ZWrite", 0);
@@ -706,23 +841,115 @@ namespace QuayTools
             return m;
         }
 
-        private Material GetMaterial(int index)
+        private static Texture2D ReadBack(Texture source, int w, int h)
         {
-            index = Mathf.Clamp(index, 0, DecalStore.Colors.Length - 1);
-            if (_materials == null) _materials = new Material[DecalStore.Colors.Length];
-            if (_materials[index] != null) return _materials[index];
+            RenderTexture rt = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+            RenderTexture prev = RenderTexture.active;
+            try
+            {
+                Graphics.Blit(source, rt);
+                RenderTexture.active = rt;
+                Texture2D t = new Texture2D(w, h, TextureFormat.ARGB32, false);
+                t.ReadPixels(new Rect(0, 0, w, h), 0, 0, false);
+                t.Apply(false);
+                return t;
+            }
+            finally
+            {
+                RenderTexture.active = prev;
+                RenderTexture.ReleaseTemporary(rt);
+            }
+        }
 
+        private Texture2D GetCompositeTexture(PropInfo info)
+        {
+            Texture2D t;
+            if (_composite.TryGetValue(info, out t) && t != null) return t;
+            if (_compositeFailed.Contains(info)) return null;
+
+            try
+            {
+                Material src = info.m_material;
+                Texture main = src.mainTexture;
+                if (main == null)
+                {
+                    _compositeFailed.Add(info);
+                    return null;
+                }
+
+                Texture aci = src.HasProperty("_ACIMap") ? src.GetTexture("_ACIMap") : null;
+
+                int w = Mathf.Clamp(main.width, 4, 1024);
+                int h = Mathf.Clamp(main.height, 4, 1024);
+                if (main.width > 1024 || main.height > 1024)
+                {
+                    float k = 1024f / Mathf.Max(main.width, main.height);
+                    w = Mathf.Max(4, Mathf.RoundToInt(main.width * k));
+                    h = Mathf.Max(4, Mathf.RoundToInt(main.height * k));
+                }
+
+                Texture2D tm = ReadBack(main, w, h);
+                Color32[] px = tm.GetPixels32();
+                Destroy(tm);
+
+                bool usedAci = false;
+                int mainMax = 0, aciMax = 0;
+                for (int i = 0; i < px.Length; i++) mainMax = Mathf.Max(mainMax, px[i].a);
+
+                if (aci != null)
+                {
+                    Texture2D ta = ReadBack(aci, w, h);
+                    Color32[] ap = ta.GetPixels32();
+                    Destroy(ta);
+                    for (int i = 0; i < ap.Length; i++) aciMax = Mathf.Max(aciMax, ap[i].r);
+                    if (aciMax > 8)
+                    {
+                        for (int i = 0; i < px.Length; i++) px[i].a = ap[i].r;
+                        usedAci = true;
+                    }
+                }
+
+                if (!usedAci && mainMax <= 8)
+                {
+                    for (int i = 0; i < px.Length; i++) px[i].a = 255; // no opacity information at all: opaque
+                }
+
+                t = new Texture2D(w, h, TextureFormat.RGBA32, true);
+                t.name = "QuayTools decal " + info.name;
+                t.SetPixels32(px);
+                t.Apply(true);
+                t.wrapMode = TextureWrapMode.Clamp;
+                t.filterMode = FilterMode.Trilinear;
+                t.anisoLevel = 4;
+                _composite[info] = t;
+
+                Debug.Log("[QuayTools] Decal texture composed for '" + info.name + "': " + w + "x" + h +
+                    (aci != null ? ", ACI map " + aci.width + "x" + aci.height + ", max R " + aciMax : ", no ACI map") +
+                    ", main max alpha " + mainMax + (usedAci ? " (opacity from ACI R)" : " (opacity from main alpha)"));
+                return t;
+            }
+            catch (System.Exception ex)
+            {
+                _compositeFailed.Add(info);
+                Debug.LogWarning("[QuayTools] Could not compose the texture of decal '" + info.name + "', using the plain main texture: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>One material for all plain strips; the colour (with opacity) comes per draw through _Color.</summary>
+        private Material GetPlainMaterial()
+        {
+            if (_plain != null) return _plain;
             if (EnsureShader() == null) return null;
 
             Material mat = new Material(_shader);
-            mat.color = DecalStore.Colors[index];
             mat.renderQueue = 3000;
             if (mat.HasProperty("_Cull")) mat.SetInt("_Cull", 0);
             if (mat.HasProperty("_ZWrite")) mat.SetInt("_ZWrite", 0);
             if (mat.HasProperty("_ZTest")) mat.SetInt("_ZTest", 4); // LessEqual
             if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", 5); // SrcAlpha
             if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", 10); // OneMinusSrcAlpha
-            _materials[index] = mat;
+            _plain = mat;
             return mat;
         }
     }

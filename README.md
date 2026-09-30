@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.3.2**
+**Version: v0.3.4**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -61,18 +61,18 @@ Lays a ground decal (any decal prop you have: Workshop decals, cobblestones, mar
 1. Select the **Add decal path** mode. The selection is shared with the network-model mode.
 2. Select quay segments (**Shift** selects the whole connected quay).
 3. Choose a **decal** in the drop-down list (the first entry, *Plain colour*, draws a simple coloured strip).
-4. The strip is a **mask**: set its **width** (0.1–50 m), an optional **sideways shift** and a **vertical offset** (±100 m). The decal is cropped by the mask.
+4. The strip is a **mask**: set its **width** (0.1–50 m), an optional **sideways shift** (+ moves toward the water, so it is the same side on every segment) and a **vertical offset** (±100 m). The decal is cropped by the mask.
 5. **Decal scale** is the width of one tile of the decal texture (choosing a decal sets its natural size). The texture is repeated along and across the mask in tiles of this size, centred on the middle of the path.
-6. Pick a **tint**: it multiplies the colours of the decal (white = original colours) or fills the plain strip.
+6. Set the **tint** with the R, G, B and A sliders (0–255) or type a hex value (`#RRGGBB` or `#RRGGBBAA`) into the field next to the preview. It multiplies the colours of the decal (white = original colours; lower values darken it, lower A makes it more transparent) or fills the plain strip. Double click a slider to reset it to 255.
 7. Press **Add / apply path**. **Remove path** removes it from the selected segments.
 
 Changing any control while segments with paths are selected updates those paths at once. The path is built from the two edge curves of the segment, so it follows the curves and heights of the quay, also after node edits made with Node Controller Renewal.
 
 Notes:
 
-- The decal is drawn with the material of the decal prop, so it looks like that prop (lighting, blending). Decals that need the terrain height map are not offered.
+- By default the decal is **placed like the game places decal props**: tiles of the decal prop are laid step by step along the path (width and scale set the tile grid; the game's decal shader projects the texture onto the surface, so heights and slopes are followed). This mode has no mask cropping. Decals that need the terrain height map are not offered.
 - A decal is stored by the name of its prop. If the asset is missing when a save is loaded, that path is not drawn (a line in the log says so).
-- If a chosen decal stays invisible, turn on **Draw decal paths with a simple textured material** in the mod options (unlit, but uses the decal texture).
+- The mod option **Decal path rendering** switches to the alternative: one textured strip cropped by the mask, drawn unlit from a texture composed from the decal prop (colours from its diffuse map, opacity from its ACI map).
 - The log lines `[QuayTools] Decal catalog: N decal props` and `[QuayTools] Decal path built: ...` help to find problems.
 
 ### Undo, Redo and Reset
@@ -175,6 +175,18 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.3.4
+- Decals are now placed step by step along the path as real game decal props (tile matrices, the way the game draws decal props). The previous approach drew one flat mesh with the game material, which the game's decal shader does not display. No mask cropping in this mode; the old textured strip is still available in the mod option **Decal path rendering**.
+- Decal strips (plain colour and the textured-strip mode) now receive shadows and never cast them (lit shader; mod option **Decal strips receive shadows**, on by default). Placed game decals use the game's own shader.
+- Node Controller Renewal: a path now always continues up to the node when the node joins exactly two segments (before, the neighbour also had to have a path). The log lists segments whose ends are away from their nodes (`ends are away from the nodes`).
+
+### v0.3.3
+- Sideways shift is now measured toward the water (+ = to the water), so a path no longer jumps to the other side on segments with a different orientation.
+- The shift is applied between the two edge curves of the segment, so the path follows heights and slope also when shifted (fixes the path sinking through the quay near nodes edited with Node Controller Renewal).
+- Decals are drawn by default from a composed texture (colours from the diffuse map, opacity from the ACI map): no more dark or translucent textures, and no need for the old option.
+- The six preset tint colours are replaced by a free RGBA colour: R, G, B, A sliders and a hex field with a preview. Older saves keep their colours.
+- The option is now "Draw decals with the decal prop's own game material" (experimental, off by default); the old option value is ignored.
 
 ### v0.3.2
 - Decal paths continue across nodes whose segment ends were moved away with Node Controller Renewal (between two segments that both have a path), so no gap is left around such nodes.

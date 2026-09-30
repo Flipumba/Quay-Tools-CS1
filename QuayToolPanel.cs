@@ -72,7 +72,11 @@ namespace QuayTools
         private UISlider _dWidth, _dScale, _dLateral, _dLift;
         private UITextField _dWidthV, _dScaleV, _dLateralV, _dLiftV;
         private PickerUi _decalUi;
-        private UIButton[] _dColors;
+        private UISlider[] _dRgba;     // R, G, B, A
+        private UILabel[] _dRgbaV;
+        private UIPanel _dSwatch;
+        private UITextField _dHex;
+        private bool _colorSync;
         private UIButton _dAdd, _dRemove;
         private readonly DecalSettings _brush = new DecalSettings(); // values used when a path is added; edits apply to existing paths
 
@@ -915,31 +919,36 @@ namespace QuayTools
                 delegate (int u) { OnDecalValue("lift", u, delegate (DecalSettings d, int v) { d.Lift = v; }); });
 
             MakeLabel(_decal, Loc.T("dcolor"), 12f, y, 0.72f);
-            y += 18f;
-            _dColors = new UIButton[DecalStore.Colors.Length];
-            for (int i = 0; i < _dColors.Length; i++)
+            _dSwatch = _decal.AddUIComponent<UIPanel>();
+            _dSwatch.size = new Vector2(40f, 18f);
+            _dSwatch.relativePosition = new Vector3(PanelWidth - 140f, y - 1f);
+            _dSwatch.backgroundSprite = "GenericPanel";
+            _dSwatch.isInteractive = false;
+            _dHex = MakeHexField(_decal, PanelWidth - 94f, y - 1f);
+            y += 24f;
+
+            string[] channelNames = { "R", "G", "B", "A" };
+            _dRgba = new UISlider[4];
+            _dRgbaV = new UILabel[4];
+            for (int i = 0; i < 4; i++)
             {
-                int index = i;
-                UIButton b = _decal.AddUIComponent<UIButton>();
-                b.size = new Vector2(44f, 26f);
-                b.relativePosition = new Vector3(12f + i * 49f, y);
-                StyleButton(b);
-                Color tint = DecalStore.Colors[i];
-                tint.a = 1f;
-                b.color = tint;
-                b.textScale = 0.9f;
-                b.eventClicked += delegate (UIComponent comp, UIMouseEventParameter e)
+                int channel = i;
+                MakeLabel(_decal, channelNames[i], 12f, y, 0.72f);
+                UISlider sl = MakeSlider(_decal, 30f, y, PanelWidth - 30f - 50f, 0f, 255f, 255f);
+                _dRgba[i] = sl;
+                _dRgbaV[i] = MakeLabel(_decal, "255", PanelWidth - 40f, y, 0.72f);
+                sl.eventValueChanged += delegate (UIComponent c, float v)
                 {
-                    _brush.ColorIndex = index;
-                    UpdateColorButtons();
-                    if (_loading) return;
-                    QuayTool tool = QuayTool.Instance;
-                    if (tool != null) tool.EditDecal("color", delegate (DecalSettings d) { d.ColorIndex = index; });
+                    if (_colorSync) return;
+                    byte value = (byte)Mathf.Clamp(Mathf.RoundToInt(v), 0, 255);
+                    SetChannel(_brush, channel, value);
+                    UpdateColorUi();
+                    PushColor();
                 };
-                _dColors[i] = b;
+                y += 22f;
             }
-            UpdateColorButtons();
-            y += 36f;
+            UpdateColorUi();
+            y += 8f;
 
             _decalState = MakeLabel(_decal, string.Empty, 12f, y, 0.75f);
             y += 22f;
@@ -1037,18 +1046,100 @@ namespace QuayTools
             SetHeaderItem(_decalUi, item);
         }
 
-        private void UpdateColorButtons()
+        private static void SetChannel(DecalSettings d, int channel, byte v)
         {
-            if (_dColors == null) return;
-            for (int i = 0; i < _dColors.Length; i++)
+            if (channel == 0) d.R = v;
+            else if (channel == 1) d.G = v;
+            else if (channel == 2) d.B = v;
+            else d.A = v;
+        }
+
+        private static string HexOf(DecalSettings d)
+        {
+            return "#" + d.R.ToString("X2") + d.G.ToString("X2") + d.B.ToString("X2") + d.A.ToString("X2");
+        }
+
+        /// <summary>Shows the brush colour in the sliders, the swatch and the hex field (without pushing it anywhere).</summary>
+        private void UpdateColorUi()
+        {
+            if (_dRgba == null || _brush == null) return;
+            _colorSync = true;
+            try
             {
-                bool on = i == _brush.ColorIndex;
-                _dColors[i].state = on ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
-                _dColors[i].text = on ? "*" : string.Empty;
-                _dColors[i].textColor = i == 0 || i == 1 ? new Color32(20, 20, 20, 255) : new Color32(255, 255, 255, 255);
-                _dColors[i].focusedTextColor = _dColors[i].textColor;
-                _dColors[i].hoveredTextColor = _dColors[i].textColor;
+                _dRgba[0].value = _brush.R;
+                _dRgba[1].value = _brush.G;
+                _dRgba[2].value = _brush.B;
+                _dRgba[3].value = _brush.A;
+                _dRgbaV[0].text = _brush.R.ToString();
+                _dRgbaV[1].text = _brush.G.ToString();
+                _dRgbaV[2].text = _brush.B.ToString();
+                _dRgbaV[3].text = _brush.A.ToString();
+                _dSwatch.color = new Color32(_brush.R, _brush.G, _brush.B, 255);
+                if (!_dHex.hasFocus) _dHex.text = HexOf(_brush);
             }
+            finally
+            {
+                _colorSync = false;
+            }
+        }
+
+        /// <summary>Applies the brush colour to the selected paths (one undo step while dragging).</summary>
+        private void PushColor()
+        {
+            if (_loading) return;
+            QuayTool tool = QuayTool.Instance;
+            if (tool == null) return;
+            byte r = _brush.R, g = _brush.G, b = _brush.B, a = _brush.A;
+            tool.EditDecal("color", delegate (DecalSettings d) { d.R = r; d.G = g; d.B = b; d.A = a; });
+        }
+
+        private UITextField MakeHexField(UIComponent parent, float x, float y)
+        {
+            UITextField f = parent.AddUIComponent<UITextField>();
+            f.atlas = UIView.GetAView().defaultAtlas;
+            f.normalBgSprite = "TextFieldPanel";
+            f.hoveredBgSprite = "TextFieldPanelHovered";
+            f.focusedBgSprite = "TextFieldPanel";
+            f.selectionSprite = "EmptySprite";
+            f.builtinKeyNavigation = true;
+            f.isInteractive = true;
+            f.readOnly = false;
+            f.horizontalAlignment = UIHorizontalAlignment.Right;
+            f.verticalAlignment = UIVerticalAlignment.Middle;
+            f.textScale = 0.72f;
+            f.padding = new RectOffset(4, 4, 3, 0);
+            f.size = new Vector2(70f, 18f);
+            f.relativePosition = new Vector3(x - 6f, y);
+            f.text = "#FFFFFFFF";
+            f.tooltip = Loc.IsRussian ? "Цвет #RRGGBB или #RRGGBBAA (hex)" : "Colour #RRGGBB or #RRGGBBAA (hex)";
+            f.eventTextSubmitted += delegate (UIComponent c, string t) { CommitHex(t); };
+            f.eventLostFocus += delegate (UIComponent c, UIFocusEventParameter e) { CommitHex(_dHex.text); };
+            return f;
+        }
+
+        private void CommitHex(string text)
+        {
+            string t = (text ?? string.Empty).Trim().TrimStart('#');
+            uint value;
+            bool ok = (t.Length == 6 || t.Length == 8) &&
+                      uint.TryParse(t, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out value);
+            if (ok)
+            {
+                value = uint.Parse(t, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture);
+                if (t.Length == 6) value = (value << 8) | 0xFFu;
+                byte r = (byte)(value >> 24), g = (byte)(value >> 16), b = (byte)(value >> 8), a = (byte)value;
+                if (r != _brush.R || g != _brush.G || b != _brush.B || a != _brush.A)
+                {
+                    _brush.R = r;
+                    _brush.G = g;
+                    _brush.B = b;
+                    _brush.A = a;
+                    UpdateColorUi();
+                    PushColor();
+                    return;
+                }
+            }
+            _dHex.text = HexOf(_brush); // invalid or unchanged: show the current value
         }
 
         /// <summary>A decal slider moved: remember it for the next "add" and apply it to the selected paths.</summary>
@@ -1092,7 +1183,10 @@ namespace QuayTools
                     _brush.Width = first.Width;
                     _brush.Lateral = first.Lateral;
                     _brush.Lift = first.Lift;
-                    _brush.ColorIndex = first.ColorIndex;
+                    _brush.R = first.R;
+                    _brush.G = first.G;
+                    _brush.B = first.B;
+                    _brush.A = first.A;
                     _brush.Prop = first.Prop;
                     _brush.Scale = first.Scale;
 
@@ -1100,7 +1194,7 @@ namespace QuayTools
                     _dScale.value = first.Scale;
                     _dLateral.value = first.Lateral;
                     _dLift.value = first.Lift;
-                    UpdateColorButtons();
+                    UpdateColorUi();
                 }
 
                 _dWidthV.text = FormatOffset(_dWidth.value);
@@ -1133,7 +1227,7 @@ namespace QuayTools
                 _dWidthV.text = FormatOffset(_dWidth.value);
                 _dLateralV.text = FormatOffset(_dLateral.value);
                 _dLiftV.text = FormatOffset(_dLift.value);
-                UpdateColorButtons();
+                UpdateColorUi();
             }
             finally
             {
@@ -1150,7 +1244,8 @@ namespace QuayTools
             _dLift.isEnabled = enabled;
             _dAdd.isEnabled = enabled;
             _dRemove.isEnabled = enabled;
-            for (int i = 0; i < _dColors.Length; i++) _dColors[i].isEnabled = enabled;
+            for (int i = 0; i < _dRgba.Length; i++) _dRgba[i].isEnabled = enabled;
+            _dHex.isEnabled = enabled;
             if (_resetBtn != null) _resetBtn.isEnabled = enabled;
         }
 
@@ -1228,7 +1323,7 @@ namespace QuayTools
             get
             {
                 if (!_built) return false;
-                UITextField[] fields = { _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dLateralV, _dLiftV };
+                UITextField[] fields = { _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dLateralV, _dLiftV, _dHex };
                 for (int i = 0; i < fields.Length; i++)
                 {
                     if (fields[i] != null && fields[i].hasFocus) return true;

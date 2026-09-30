@@ -16,9 +16,14 @@ namespace QuayTools
         public int Width = DefaultWidth; // units of FenceStore.Unit (0.1 m)
         public int Lateral;              // sideways shift from the middle of the quay, right of start->end positive
         public int Lift;                 // height above the quay surface
-        public int ColorIndex;         // tint of a decal, fill colour of a solid path
+        public byte R = 255, G = 255, B = 255, A = 255; // tint of a decal (multiplies its colours and opacity), fill colour of a plain path
         public string Prop;            // name of the decal prop (PropInfo); null = plain coloured strip
         public int Scale = DefaultScale; // world width of one repeat of the decal texture, units of 0.1 m
+
+        public Color TintColor
+        {
+            get { return new Color32(R, G, B, A); }
+        }
 
         public DecalSettings Clone()
         {
@@ -30,13 +35,16 @@ namespace QuayTools
             Width = DefaultWidth;
             Lateral = 0;
             Lift = 0;
-            ColorIndex = 0;
+            R = 255;
+            G = 255;
+            B = 255;
+            A = 255;
             Scale = DefaultScale;
         }
 
         public bool SameAs(DecalSettings o)
         {
-            return o != null && Width == o.Width && Lateral == o.Lateral && Lift == o.Lift && ColorIndex == o.ColorIndex &&
+            return o != null && Width == o.Width && Lateral == o.Lateral && Lift == o.Lift && R == o.R && G == o.G && B == o.B && A == o.A &&
                    Scale == o.Scale && Prop == o.Prop;
         }
     }
@@ -49,17 +57,18 @@ namespace QuayTools
         public const int MinWidth = 1;    // 0.1 m
         public const int MaxWidth = 500;  // 50 m
 
-        public static readonly Color[] Colors =
+        // palette of the old versions (format 2 saves stored an index)
+        private static readonly Color32[] LegacyColors =
         {
-            new Color(1.00f, 1.00f, 1.00f, 1.00f), // white (a decal keeps its own colours)
-            new Color(0.98f, 0.82f, 0.10f, 0.96f), // yellow
-            new Color(0.85f, 0.15f, 0.12f, 0.96f), // red
-            new Color(0.15f, 0.42f, 0.85f, 0.96f), // blue
-            new Color(0.50f, 0.50f, 0.50f, 0.96f), // grey
-            new Color(0.08f, 0.08f, 0.08f, 0.96f)  // black
+            new Color32(255, 255, 255, 255), // white
+            new Color32(250, 209, 26, 245),  // yellow
+            new Color32(217, 38, 31, 245),   // red
+            new Color32(38, 107, 217, 245),  // blue
+            new Color32(128, 128, 128, 245), // grey
+            new Color32(20, 20, 20, 245)     // black
         };
 
-        private const int FormatVersion = 2;
+        private const int FormatVersion = 3;
         private static readonly Dictionary<ushort, DecalSettings> Map = new Dictionary<ushort, DecalSettings>();
 
         /// <summary>Raised (flag) whenever the content changes; the renderer rebuilds its meshes.</summary>
@@ -139,7 +148,10 @@ namespace QuayTools
                         w.Write(s.Width);
                         w.Write(s.Lateral);
                         w.Write(s.Lift);
-                        w.Write(s.ColorIndex);
+                        w.Write(s.R);
+                        w.Write(s.G);
+                        w.Write(s.B);
+                        w.Write(s.A);
                         w.Write(s.Prop ?? string.Empty);
                         w.Write(s.Scale);
                     }
@@ -172,7 +184,21 @@ namespace QuayTools
                             s.Width = Mathf.Clamp(r.ReadInt32(), MinWidth, MaxWidth);
                             s.Lateral = Mathf.Clamp(r.ReadInt32(), -FenceStore.MaxUnits, FenceStore.MaxUnits);
                             s.Lift = Mathf.Clamp(r.ReadInt32(), -FenceStore.MaxUnits, FenceStore.MaxUnits);
-                            s.ColorIndex = Mathf.Clamp(r.ReadInt32(), 0, Colors.Length - 1);
+                            if (version >= 3)
+                            {
+                                s.R = r.ReadByte();
+                                s.G = r.ReadByte();
+                                s.B = r.ReadByte();
+                                s.A = r.ReadByte();
+                            }
+                            else
+                            {
+                                Color32 old = LegacyColors[Mathf.Clamp(r.ReadInt32(), 0, LegacyColors.Length - 1)];
+                                s.R = old.r;
+                                s.G = old.g;
+                                s.B = old.b;
+                                s.A = old.a;
+                            }
                             if (version >= 2)
                             {
                                 string prop = r.ReadString();
