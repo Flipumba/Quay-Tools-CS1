@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.1.4**
+**Version: v0.1.5**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -110,6 +110,9 @@ Quay Tools uses `CitiesHarmony.API`; the Harmony library itself comes from the *
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.1.5
+- Node Controller compatibility: the fence position is now interpolated between the two real corners of the segment end, so rotation, shift, stretch and height changes of a node are followed without artifacts.
 
 ### v0.1.4
 - Fences at node fragments (bends) are rebuilt too, so height and offsets also work on nodes edited with Node Controller.

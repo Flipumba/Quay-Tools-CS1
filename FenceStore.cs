@@ -70,50 +70,75 @@ namespace QuayTools
             }
         }
 
+        /// <summary>The corner of a segment at one of its nodes, exactly as the game (and mods like Node Controller) compute it.</summary>
+        private static void RawCorner(ushort segment, bool start, bool left, out Vector3 pos)
+        {
+            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
+            Vector3 dir;
+            bool smooth;
+            int saved = Patches.FenceContext.Depth;
+            Patches.FenceContext.Depth = 0; // do not adjust our own helper calls
+            try
+            {
+                segs[segment].CalculateCorner(segment, true, start, left, out pos, out dir, out smooth, 0f);
+            }
+            finally
+            {
+                Patches.FenceContext.Depth = saved;
+            }
+        }
+
         /// <summary>
-        /// Moves a fence corner (result of NetSegment.CalculateCorner) to where this segment's fence should be:
-        /// at the quay model edge plus the horizontal offset, at the quay deck height plus the vertical offset.
-        /// It works on the finished corner position, so other mods that reshape node corners (Node Controller)
-        /// are respected: the model edge scales with the actual corner width, the along-road position is kept.
+        /// Gives the position a fence corner of this segment must have: on the quay model edge plus the horizontal
+        /// offset, at the height of the quay plus the vertical offset.
+        /// The quay model is stretched between the two corners of the segment end (left and right), so the model
+        /// edge is found by interpolating between those two real corners. Anything that reshapes a node
+        /// (rotation, shift, stretching, height changes of Node Controller) therefore carries over automatically.
         /// </summary>
         public static bool TryAdjustCorner(ushort segment, bool start, bool left, ref Vector3 pos)
         {
             FenceSettings s;
             if (!TryGet(segment, out s)) return false;
 
-            NetManager nm = NetManager.instance;
-            NetSegment[] segs = nm.m_segments.m_buffer;
+            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
             NetInfo info = segs[segment].Info;
             if (info == null) return false;
-
-            ushort node = start ? segs[segment].m_startNode : segs[segment].m_endNode;
-            if (node == 0) return false;
-
-            // direction start -> end at this node (both stored directions point from the node into the segment)
-            Vector3 fwd = start ? segs[segment].m_startDirection : -segs[segment].m_endDirection;
-            fwd.y = 0f;
-            if (fwd.sqrMagnitude < 1e-6f) return false;
-            fwd.Normalize();
-            Vector3 right = Vector3.Cross(Vector3.up, fwd);
 
             bool invert = (segs[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None;
             QuayFrame f = QuayGeometry.GetFrame(info, invert);
 
+            Vector3 cLeftParam, cRightParam;
+            RawCorner(segment, start, true, out cLeftParam);
+            RawCorner(segment, start, false, out cRightParam);
+
             // At the end node the game's left/right are seen from the node, so they swap.
+            Vector3 geoLeft = start ? cLeftParam : cRightParam;
+            Vector3 geoRight = start ? cRightParam : cLeftParam;
+
             bool geometricRight = start ? !left : left;
             bool isLand = geometricRight == !f.WaterIsRight;
 
-            float edge = isLand ? f.LandEdge : f.WaterEdge;
+            float edge = isLand ? f.LandEdge : f.WaterEdge;   // signed metres from the centre line, right positive
             int h = isLand ? s.LandH : s.WaterH;
             int v = isLand ? s.LandV : s.WaterV;
 
-            Vector3 center = nm.m_nodes.m_buffer[node].m_position;
-            float cur = Vector3.Dot(pos - center, right);
-            float k = Mathf.Clamp(Mathf.Abs(cur) / Mathf.Max(f.H, 0.1f), 0.05f, 4f); // width of the corner vs. normal
+            float t = 0.5f + edge / (2f * Mathf.Max(f.H, 0.1f));
+            Vector3 p = Vector3.Lerp(geoLeft, geoRight, t);
 
-            float target = edge * k + h * Unit * (f.WaterIsRight ? 1f : -1f); // + moves toward the water
-            pos += right * (target - cur);
-            pos.y += v * Unit;
+            Vector3 lateral = geoRight - geoLeft;
+            lateral.y = 0f;
+            if (lateral.sqrMagnitude < 1e-4f)
+            {
+                lateral = Vector3.Cross(Vector3.up, segs[segment].m_startDirection);
+                lateral.y = 0f;
+            }
+            if (lateral.sqrMagnitude < 1e-6f) return false;
+            lateral.Normalize();
+
+            p += lateral * (h * Unit * (f.WaterIsRight ? 1f : -1f)); // + moves toward the water
+            p.y += v * Unit;
+
+            pos = p;
             return true;
         }
 
