@@ -23,6 +23,7 @@ namespace QuayTools
         private const int MaxBuildsPerFrame = 12;
         private const int ChecksPerFrame = 6;
         private const float RetrySeconds = 3f;
+        private const float BridgeBox = 20f;      // metres: projection box height of placed decals over a gap between segment ends
         private const int MaxTiles = 1500;         // placed decals per segment
 
         private struct Corners
@@ -54,7 +55,7 @@ namespace QuayTools
             public float RetryAt;
             public bool Logged;
             public bool FailLogged;
-            public bool BridgeStart, BridgeEnd; // path continues across the node to the neighbour segment
+            public int BridgeStart, BridgeEnd;   // 0: no bridge, 1: the neighbour bridges the gap, 2: this path bridges the gap up to the neighbour
             public List<Matrix4x4> Tiles;   // placed game decals (one matrix per tile)
             public bool Placed;
             public bool WaterRight;      // water side of the segment when built (the sideways shift is signed toward water)
@@ -143,7 +144,7 @@ namespace QuayTools
                 if (ReadCorners(id, out c) && !c.Same(item.Last)) item.Dirty = true;
 
                 // a neighbour got or lost its path: the bridge across the node changes
-                if (BridgeAt(id, segs[id].m_startNode) != item.BridgeStart || BridgeAt(id, segs[id].m_endNode) != item.BridgeEnd) item.Dirty = true;
+                if (BridgeMode(id, segs[id].m_startNode) != item.BridgeStart || BridgeMode(id, segs[id].m_endNode) != item.BridgeEnd) item.Dirty = true;
 
                 // the segment was inverted: the water is on the other side now, the sideways shift follows it
                 if (QuayGeometry.GetFrame(id).WaterIsRight != item.WaterRight) item.Dirty = true;
@@ -228,12 +229,20 @@ namespace QuayTools
 
             Vector3[] left = { c.sL, mL1, mL2, c.eL };
             Vector3[] right = { c.sR, mR1, mR2, c.eR };
+            return BlendControlPoints(left, right, s, lift, waterRight, P);
+        }
+
+        /// <summary>
+        /// Blends the left and right edge curves into the path centre line. The sideways shift is a change of the blend
+        /// parameter between the two edge curves, so the path stays on the surface between them (heights, cross slope and
+        /// twist included).
+        /// </summary>
+        private static bool BlendControlPoints(Vector3[] left, Vector3[] right, DecalSettings s, float lift, bool waterRight, Vector3[] P)
+        {
             float lateral = s.Lateral * FenceStore.Unit * (waterRight ? 1f : -1f); // + toward the water
 
             for (int i = 0; i < 4; i++)
             {
-                // the shift is a change of the blend parameter between the two edge curves, so the path stays on the
-                // surface between them (heights, cross slope and twist included)
                 Vector3 span = right[i] - left[i];
                 Vector3 flat = span;
                 flat.y = 0f;
@@ -270,13 +279,14 @@ namespace QuayTools
         }
 
         /// <summary>
-        /// True when the node joins exactly two segments. Segment ends can
-        /// be moved away from the node (Node Controller Renewal); the node area between the two ends is then part of no
-        /// segment, so the path is continued up to the node (the neighbour does the same from its side).
+        /// Segment ends can be moved away from the node (Node Controller Renewal); the node area between the two ends is
+        /// then part of no segment. When the node joins exactly two segments, one of the two paths bridges the gap: the
+        /// neighbour's path if it has one and a smaller id, otherwise this one. Returns 0 (no bridge), 1 (the neighbour
+        /// bridges) or 2 (this path bridges).
         /// </summary>
-        private static bool BridgeAt(ushort id, ushort nodeId)
+        private static int BridgeMode(ushort id, ushort nodeId)
         {
-            if (nodeId == 0) return false;
+            if (nodeId == 0) return 0;
             NetNode node = NetManager.instance.m_nodes.m_buffer[nodeId];
             int count = 0;
             ushort other = 0;
@@ -287,16 +297,20 @@ namespace QuayTools
                 count++;
                 if (seg != id) other = seg;
             }
-            return count == 2 && other != 0;
+            if (count != 2 || other == 0) return 0;
+            return DecalStore.Has(other) && other < id ? 1 : 2;
         }
 
         /// <summary>
-        /// End point of the neighbour's path at the node (the neighbour is the only other segment of the node). The
-        /// neighbour's corners already contain the Node Controller Renewal edits, so this is where the real surface continues.
+        /// Control points of the path across the gap between this segment's end and its neighbour's end at the node. The
+        /// gap is treated as a short segment: its left and right edge curves join the corners of the two ends (positions
+        /// and directions come from the game's corner calculation, so the Node Controller Renewal edits are included:
+        /// shifted borders, border angles as different lengths of the two edge curves, heights), and the path is blended
+        /// from them exactly like the path of a real segment. Q runs in the travel direction of this path: from the
+        /// neighbour to the start of this path, or from the end of this path to the neighbour.
         /// </summary>
-        private static bool NeighbourEnd(ushort id, ushort nodeId, DecalSettings fallback, float baseLift, out Vector3 point)
+        private static bool BridgeControlPoints(ushort id, ushort nodeId, bool atOwnStart, Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] Q)
         {
-            point = Vector3.zero;
             if (nodeId == 0) return false;
 
             NetManager nm = NetManager.instance;
@@ -312,51 +326,123 @@ namespace QuayTools
             Corners oc;
             if (!ReadCorners(other, out oc)) return false;
 
-            DecalSettings os;
-            if (!DecalStore.TryGet(other, out os)) os = fallback;
+            bool nbAtStart = nm.m_segments.m_buffer[other].m_startNode == nodeId;
+            Vector3 n0 = nbAtStart ? oc.sL : oc.eL, d0 = nbAtStart ? oc.dSL : oc.dEL;
+            Vector3 n1 = nbAtStart ? oc.sR : oc.eR, d1 = nbAtStart ? oc.dSR : oc.dER;
 
-            Vector3[] T = new Vector3[4];
-            bool wr = QuayGeometry.GetFrame(other).WaterIsRight;
-            if (!CornerControlPoints(oc, os, baseLift + os.Lift * FenceStore.Unit, wr, T)) return false;
+            Vector3 ownL = atOwnStart ? c.sL : c.eL, dOwnL = atOwnStart ? c.dSL : c.dEL;
+            Vector3 ownR = atOwnStart ? c.sR : c.eR, dOwnR = atOwnStart ? c.dSR : c.dER;
 
-            point = nm.m_segments.m_buffer[other].m_startNode == nodeId ? T[0] : T[3];
-            return true;
+            // which neighbour corner lies on the left side of this path
+            float straight = (n0 - ownL).sqrMagnitude + (n1 - ownR).sqrMagnitude;
+            float crossed = (n1 - ownL).sqrMagnitude + (n0 - ownR).sqrMagnitude;
+            Vector3 nL = n0, dnL = d0, nR = n1, dnR = d1;
+            if (crossed < straight)
+            {
+                nL = n1;
+                dnL = d1;
+                nR = n0;
+                dnR = d0;
+            }
+
+            // A is where the bridge starts, B where it ends (travel direction of this path)
+            Vector3 aL, aR, bL, bR, daL, daR, dbL, dbR;
+            if (atOwnStart)
+            {
+                aL = nL; daL = dnL; aR = nR; daR = dnR;
+                bL = ownL; dbL = dOwnL; bR = ownR; dbR = dOwnR;
+            }
+            else
+            {
+                aL = ownL; daL = dOwnL; aR = ownR; daR = dOwnR;
+                bL = nL; dbL = dnL; bR = nR; dbR = dnR;
+            }
+
+            // the corner directions point into their own segment; along the bridge they point the other way
+            Vector3 l1, l2, r1, r2;
+            NetSegment.CalculateMiddlePoints(aL, -daL, bL, -dbL, false, false, out l1, out l2);
+            NetSegment.CalculateMiddlePoints(aR, -daR, bR, -dbR, false, false, out r1, out r2);
+
+            Vector3[] left = { aL, l1, l2, bL };
+            Vector3[] right = { aR, r1, r2, bR };
+            return BlendControlPoints(left, right, s, lift, waterRight, Q);
         }
 
-        /// <summary>Adds a straight piece at the start and/or the end of the path (up to the node).</summary>
-        private static void Extend(Path path, Vector3? atStart, Vector3? atEnd)
+        /// <summary>Samples the bridge curve Q (positions and left directions), including both ends.</summary>
+        private static void SampleBridge(Vector3[] Q, List<Vector3> pos, List<Vector3> left)
         {
-            if (!atStart.HasValue && !atEnd.HasValue) return;
+            Bezier3 line = new Bezier3();
+            line.a = Q[0];
+            line.b = Q[1];
+            line.c = Q[2];
+            line.d = Q[3];
 
-            int n = path.Pos.Length;
-            int add = (atStart.HasValue ? 1 : 0) + (atEnd.HasValue ? 1 : 0);
-            Vector3[] pos = new Vector3[n + add];
-            Vector3[] left = new Vector3[n + add];
-            int o = 0;
-            if (atStart.HasValue)
+            float rough = (Q[1] - Q[0]).magnitude + (Q[2] - Q[1]).magnitude + (Q[3] - Q[2]).magnitude;
+            int n = Mathf.Clamp(Mathf.CeilToInt(rough / SampleStep), 2, 80);
+            Vector3 last = Vector3.left;
+            for (int i = 0; i <= n; i++)
             {
-                pos[0] = atStart.Value;
-                left[0] = path.Left[0];
-                o = 1;
+                float u = i / (float)n;
+                pos.Add(line.Position(u));
+                Vector3 l = Vector3.Cross(Tangent(Q, u), Vector3.up);
+                l.y = 0f;
+                if (l.sqrMagnitude > 1e-8f) l.Normalize();
+                else l = last;
+                last = l;
+                left.Add(l);
             }
-            for (int i = 0; i < n; i++)
+        }
+
+        /// <summary>Continues the path across the gaps at the start and/or the end with the bridge curves.</summary>
+        private static void ExtendCurve(Path path, Vector3[] Qs, Vector3[] Qe)
+        {
+            if (Qs == null && Qe == null) return;
+
+            List<Vector3> pos = new List<Vector3>();
+            List<Vector3> left = new List<Vector3>();
+            int startCount = 0;
+
+            if (Qs != null)
             {
-                pos[o + i] = path.Pos[i];
-                left[o + i] = path.Left[i];
-            }
-            if (atEnd.HasValue)
-            {
-                pos[n + o] = atEnd.Value;
-                left[n + o] = path.Left[n - 1];
+                List<Vector3> sp = new List<Vector3>();
+                List<Vector3> sl = new List<Vector3>();
+                SampleBridge(Qs, sp, sl);
+                for (int i = 0; i < sp.Count - 1; i++) // the last sample is the start of the path itself
+                {
+                    pos.Add(sp[i]);
+                    left.Add(sl[i]);
+                }
+                startCount = pos.Count;
             }
 
-            float[] dist = new float[n + add];
+            for (int i = 0; i < path.Pos.Length; i++)
+            {
+                pos.Add(path.Pos[i]);
+                left.Add(path.Left[i]);
+            }
+            int endIndex = pos.Count - 1;
+
+            if (Qe != null)
+            {
+                List<Vector3> ep = new List<Vector3>();
+                List<Vector3> el = new List<Vector3>();
+                SampleBridge(Qe, ep, el);
+                for (int i = 1; i < ep.Count; i++) // the first sample is the end of the path itself
+                {
+                    pos.Add(ep[i]);
+                    left.Add(el[i]);
+                }
+            }
+
+            float[] dist = new float[pos.Count];
             for (int i = 1; i < dist.Length; i++) dist[i] = dist[i - 1] + (pos[i] - pos[i - 1]).magnitude;
 
-            path.Pos = pos;
-            path.Left = left;
+            path.Pos = pos.ToArray();
+            path.Left = left.ToArray();
             path.Dist = dist;
             path.Length = Mathf.Max(dist[dist.Length - 1], 0.01f);
+            if (Qs != null) path.BridgeStartLen = dist[startCount];
+            if (Qe != null) path.BridgeEndFrom = dist[endIndex];
         }
 
         private void Fail(ushort id, Item item, string why, float seconds)
@@ -415,8 +501,8 @@ namespace QuayTools
                 Path path = SamplePath(P);
 
                 NetSegment seg = NetManager.instance.m_segments.m_buffer[id];
-                item.BridgeStart = BridgeAt(id, seg.m_startNode);
-                item.BridgeEnd = BridgeAt(id, seg.m_endNode);
+                item.BridgeStart = BridgeMode(id, seg.m_startNode);
+                item.BridgeEnd = BridgeMode(id, seg.m_endNode);
                 if (ok && _gapLogs < 24)
                 {
                     NetNode[] nn = NetManager.instance.m_nodes.m_buffer;
@@ -430,46 +516,22 @@ namespace QuayTools
                             "), end " + he.ToString("0.0") + " m (dy " + ge.y.ToString("0.0") + ", bridge " + item.BridgeEnd + ")");
                     }
                 }
-                if (ok && (item.BridgeStart || item.BridgeEnd))
+                if (ok && (item.BridgeStart == 2 || item.BridgeEnd == 2))
                 {
-                    NetNode[] nodes = NetManager.instance.m_nodes.m_buffer;
-                    Vector3? qs = null, qe = null;
-                    float baseLift = prop != null ? DecalLift : SolidLift;
-                    if (item.BridgeStart)
+                    Vector3[] Qs = null, Qe = null;
+                    if (item.BridgeStart == 2)
                     {
-                        Vector3 po;
-                        Vector3 q;
-                        if (NeighbourEnd(id, seg.m_startNode, item.Settings, baseLift, out po))
-                        {
-                            q = (P[0] + po) * 0.5f; // both segments continue to the middle of the gap between their ends
-                        }
-                        else
-                        {
-                            q = nodes[seg.m_startNode].m_position + (P[0] - (c.sL + c.sR) * 0.5f);
-                            q.y = P[0].y;
-                        }
-                        Vector3 d = q - P[0];
-                        d.y = 0f;
-                        if (d.sqrMagnitude > 0.0025f) qs = q;
+                        Vector3[] q = new Vector3[4];
+                        if (BridgeControlPoints(id, seg.m_startNode, true, c, item.Settings, lift, waterRight, q) &&
+                            new Vector2(q[0].x - q[3].x, q[0].z - q[3].z).magnitude > 0.05f) Qs = q;
                     }
-                    if (item.BridgeEnd)
+                    if (item.BridgeEnd == 2)
                     {
-                        Vector3 po;
-                        Vector3 q;
-                        if (NeighbourEnd(id, seg.m_endNode, item.Settings, baseLift, out po))
-                        {
-                            q = (P[3] + po) * 0.5f;
-                        }
-                        else
-                        {
-                            q = nodes[seg.m_endNode].m_position + (P[3] - (c.eL + c.eR) * 0.5f);
-                            q.y = P[3].y;
-                        }
-                        Vector3 d = q - P[3];
-                        d.y = 0f;
-                        if (d.sqrMagnitude > 0.0025f) qe = q;
+                        Vector3[] q = new Vector3[4];
+                        if (BridgeControlPoints(id, seg.m_endNode, false, c, item.Settings, lift, waterRight, q) &&
+                            new Vector2(q[0].x - q[3].x, q[0].z - q[3].z).magnitude > 0.05f) Qe = q;
                     }
-                    Extend(path, qs, qe);
+                    ExtendCurve(path, Qs, Qe);
                 }
 
                 float width = Mathf.Clamp(item.Settings.Width, DecalStore.MinWidth, DecalStore.MaxWidth) * FenceStore.Unit;
@@ -517,7 +579,7 @@ namespace QuayTools
 
                 if (_diagnostics < 6 || !item.Logged)
                 {
-                    if (_diagnostics < 6) Debug.Log("[QuayTools] Decal path built: segment " + id + ", length " + path.Length.ToString("0.0") + (item.BridgeStart || item.BridgeEnd ? " (bridged)" : "") +
+                    if (_diagnostics < 6) Debug.Log("[QuayTools] Decal path built: segment " + id + ", length " + path.Length.ToString("0.0") + (item.BridgeStart == 2 || item.BridgeEnd == 2 ? " (bridged)" : "") +
                         " m, " + data.Vertices.Count + " vertices, " + (prop != null ? "decal " + prop.name : "plain strip"));
                     _diagnostics++;
                     item.Logged = true;
@@ -538,6 +600,8 @@ namespace QuayTools
             public Vector3[] Left;
             public float[] Dist;
             public float Length;
+            public float BridgeStartLen = -1f;              // path length of the bridged gap at the start (-1: none)
+            public float BridgeEndFrom = float.MaxValue;    // path distance where the bridged gap at the end begins
             private int _cursor;
 
             public void ResetCursor()
@@ -755,7 +819,7 @@ namespace QuayTools
             float sx = size.x > 0.01f ? tileW / size.x : 1f;
             float sz = size.z > 0.01f ? tileL / size.z : 1f;
             float sy = size.y > 0.1f ? Mathf.Clamp(boxHeight / size.y, 0.02f, 100f) : 1f; // height of the projection box around the surface
-            Vector3 scale = new Vector3(sx, sy, sz);
+            float syBridge = size.y > 0.1f ? Mathf.Clamp(Mathf.Max(boxHeight, BridgeBox) / size.y, 0.02f, 100f) : 1f;
             Matrix4x4 centre = Matrix4x4.TRS(-b.center, Quaternion.identity, Vector3.one);
 
             List<Matrix4x4> tiles = new List<Matrix4x4>(cols * rows);
@@ -767,6 +831,11 @@ namespace QuayTools
                 Vector3 fwd = Vector3.Cross(Vector3.up, left);
                 if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
                 Quaternion rot = Quaternion.LookRotation(fwd, Vector3.up);
+
+                // over a bridged gap the real surface height is not known exactly: use a much taller projection box
+                float dc = (r + 0.5f) * spacing;
+                bool inGap = dc < path.BridgeStartLen + tileL * 0.5f || dc > path.BridgeEndFrom - tileL * 0.5f;
+                Vector3 scale = new Vector3(sx, inGap ? syBridge : sy, sz);
 
                 for (int c = 0; c < cols; c++)
                 {

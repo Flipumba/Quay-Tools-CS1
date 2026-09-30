@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.3.5**
+**Version: v0.3.6**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -175,6 +175,10 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.3.6
+- Node Controller Renewal nodes, rewritten bridge: when a node joins two segments, ONE of the two paths (the neighbour's if it has a path and a smaller id, otherwise this one) continues across the gap. The gap is treated as a short segment: its left and right edge curves join the corners of the two ends (the corners come from the game's corner calculation, which NCR replaces, so shifted borders, border angles - the different lengths of the two edge curves - and heights are included), and the path is blended from them exactly like the path of a real segment. Tiles no longer jump sideways or leave wedges at the node, wide gaps follow the curve of the quay, and the height in the gap follows the slopes of the two ends.
+- Placed decals over such a gap use a taller projection box (at least 20 m) as a safety margin.
 
 ### v0.3.5
 - New sliders for placed decals: **Decal step** (distance between tiles along the path, 0 = one tile length so tiles touch; a larger value leaves gaps, a smaller one overlaps them) and **Decal box height** (thickness of the projection box, default 8 m: it decides how far above and below the path the decal is projected onto the surface).
