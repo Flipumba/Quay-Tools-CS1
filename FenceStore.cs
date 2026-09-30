@@ -10,6 +10,27 @@ namespace QuayTools
     {
         public int LandH, LandV, WaterH, WaterV; // slider units, see FenceStore.Unit
         public bool CapStart, CapEnd; // straight closing fence at the start / end of the segment (dead ends)
+
+        /// <summary>The Invert flag of the segment the fence slots currently correspond to (see FenceStore.Reconcile).</summary>
+        public bool Inverted;
+
+        public FenceSettings Clone()
+        {
+            return (FenceSettings)MemberwiseClone();
+        }
+
+        /// <summary>Back to defaults: no offsets, no closing fences. The Inverted state is kept.</summary>
+        public void ResetOffsets()
+        {
+            LandH = LandV = WaterH = WaterV = 0;
+            CapStart = CapEnd = false;
+        }
+
+        public bool SameAs(FenceSettings o)
+        {
+            return o != null && LandH == o.LandH && LandV == o.LandV && WaterH == o.WaterH && WaterV == o.WaterV &&
+                   CapStart == o.CapStart && CapEnd == o.CapEnd && Inverted == o.Inverted;
+        }
     }
 
     /// <summary>Thread-safe store of FenceSettings keyed by segment id, saved in the savegame.</summary>
@@ -21,7 +42,7 @@ namespace QuayTools
         /// <summary>Slider/field limit in units: 1000 units = 100 m.</summary>
         public const int MaxUnits = 1000;
 
-        private const int FormatVersion = 2;
+        private const int FormatVersion = 3;
         private static readonly Dictionary<ushort, FenceSettings> Map = new Dictionary<ushort, FenceSettings>();
 
         public static bool TryGet(ushort segment, out FenceSettings settings)
@@ -48,9 +69,67 @@ namespace QuayTools
                 if (!Map.TryGetValue(segment, out s))
                 {
                     s = new FenceSettings();
+                    s.Inverted = IsInverted(segment);
                     Map[segment] = s;
                 }
                 return s;
+            }
+        }
+
+        /// <summary>Replaces (or, with null, removes) the settings of a segment. Used by undo/redo.</summary>
+        public static void Set(ushort segment, FenceSettings settings)
+        {
+            lock (Map)
+            {
+                if (settings == null) Map.Remove(segment);
+                else Map[segment] = settings;
+            }
+        }
+
+        private static bool IsInverted(ushort segment)
+        {
+            return (NetManager.instance.m_segments.m_buffer[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None;
+        }
+
+        /// <summary>
+        /// The game (or another mod) may change the Invert flag of a segment by itself, for example while nodes are moved.
+        /// That mirrors the quay, so land and water swap sides; the fences follow their land/water meaning, hence the two
+        /// slots are swapped. Returns true when something changed (the caller refreshes the renderers).
+        /// Any thread that owns the segment data (simulation thread).
+        /// </summary>
+        public static bool Reconcile(ushort segment)
+        {
+            FenceSettings s;
+            if (!TryGet(segment, out s)) return false;
+
+            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
+            if ((segs[segment].m_flags & NetSegment.Flags.Created) == NetSegment.Flags.None) return false;
+
+            bool now = IsInverted(segment);
+            if (s.Inverted == now) return false;
+
+            s.Inverted = now;
+            NetInfo left = segs[segment].LeftFenceInfo;
+            segs[segment].LeftFenceInfo = segs[segment].RightFenceInfo;
+            segs[segment].RightFenceInfo = left;
+            return true;
+        }
+
+        /// <summary>Segments whose Invert flag no longer matches the state their fences were placed for.</summary>
+        public static void FindMismatches(List<ushort> result)
+        {
+            result.Clear();
+            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
+            lock (Map)
+            {
+                foreach (KeyValuePair<ushort, FenceSettings> kv in Map)
+                {
+                    bool now = (segs[kv.Key].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None;
+                    if (kv.Value.Inverted != now && (segs[kv.Key].m_flags & NetSegment.Flags.Created) != NetSegment.Flags.None)
+                    {
+                        result.Add(kv.Key);
+                    }
+                }
             }
         }
 
@@ -180,6 +259,7 @@ namespace QuayTools
                         w.Write(s.WaterV);
                         w.Write(s.CapStart);
                         w.Write(s.CapEnd);
+                        w.Write(s.Inverted);
                     }
                 }
                 w.Flush();
@@ -198,7 +278,7 @@ namespace QuayTools
                 using (BinaryReader r = new BinaryReader(ms))
                 {
                     int version = r.ReadInt32();
-                    if (version != 1 && version != FormatVersion) return;
+                    if (version < 1 || version > FormatVersion) return;
 
                     int count = r.ReadInt32();
                     lock (Map)
@@ -217,6 +297,10 @@ namespace QuayTools
                                 s.CapStart = r.ReadBoolean();
                                 s.CapEnd = r.ReadBoolean();
                             }
+
+                            // older saves did not record the orientation the fences belong to: assume the current one
+                            if (version >= 3) s.Inverted = r.ReadBoolean();
+                            else s.Inverted = IsInverted(id);
                             Map[id] = s;
                         }
                     }

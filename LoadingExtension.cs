@@ -34,6 +34,7 @@ namespace QuayTools
             // Quick-flip hotkey works without the tool; it checks the option itself.
             _hotkeyHost = new GameObject("QuayToolsController");
             _hotkeyHost.AddComponent<QuayToolsController>();
+            _hotkeyHost.AddComponent<DecalRenderer>();
             Debug.Log("[QuayTools] Load finished");
         }
 
@@ -41,6 +42,9 @@ namespace QuayTools
         {
             Debug.Log("[QuayTools] OnLevelUnloading");
             FenceHeight.Clear();
+            History.Clear();
+            DecalStore.Clear();
+            FenceStore.Clear();
             Bootstrap.Shutdown();
             Debug.Log("[QuayTools] Shutdown finished");
 

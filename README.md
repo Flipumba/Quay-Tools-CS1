@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.1.6**
+**Version: v0.2.1**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -50,12 +50,37 @@ To remove models, select the segments and press **Remove models** under the sett
 
 Selection lines: green = land edge, blue = water edge.
 
+#### Orientation changes made by the game
+
+If the game (or another mod) flips the orientation of a segment by itself, for example while nodes are moved, the fences follow: Model 1 stays on the land side and Model 2 on the water side. The check runs about three times a second, so a fence may take a moment to move.
+
+### Add Decal Path
+
+Adds a flat, coloured path strip along the middle of the top surface of a quay.
+
+1. Select the **Add decal path** mode. The selection is shared with the network-model mode.
+2. Select quay segments (**Shift** selects the whole connected quay).
+3. Set the **path width** (0.1–50 m), an optional **sideways shift** and **vertical offset** (±100 m), and one of six **colours**.
+4. Press **Add / apply path**. **Remove path** removes it from the selected segments.
+
+Changing a slider or the colour while segments with paths are selected updates those paths at once. The path is built from the two edge curves of the segment, so it follows the curves and heights of the quay, also after node edits made with Node Controller Renewal.
+
+The path is drawn by the mod itself (a flat mesh, not a game asset), so it has no lighting or texture. Its shader is chosen at start-up; the log line `[QuayTools] Decal paths use shader ...` shows which one.
+
+### Undo, Redo and Reset
+
+At the bottom of the window in the network-model and decal modes:
+
+- **Undo / Redo** (also **Ctrl+Z**, **Ctrl+Y** or **Ctrl+Shift+Z** while the tool is active): models, offsets, closing fences, decal paths and resets, up to 100 steps. Dragging a slider counts as one step. The history is kept until the map is left; it is not saved in the savegame.
+- **Reset**: sets offsets and closing fences (network-model mode) or width, shifts and colour (decal mode) of the selected segments back to their defaults. Models stay.
+- The Ctrl+Z / Ctrl+Y keys can be turned off in the mod options. The history is Quay Tools' own; it is not connected to other undo mods.
+
 #### How it works
 
 - The fence is written into the segment's left/right fence slot, as the vanilla fence tool does (vanilla refuses quays because they are not `RoadBaseAI`). The game saves the fence with the segment and removes it when the segment is deleted.
 - Horizontal/vertical offsets and the "do not join" option are applied with Harmony patches while the game builds fence geometry.
 - The width used for the highlight and the fence position is measured from the quay's visible model, not from the (much wider) network.
-- Per-segment offsets are saved in the savegame (key `QuayTools.Fences`). Loading a save without the mod simply ignores them.
+- Per-segment offsets are saved in the savegame (key `QuayTools.Fences`) and decal paths under `QuayTools.Decals`. Loading a save without the mod simply ignores them.
 
 ## Planned / Incomplete Features
 
@@ -110,6 +135,15 @@ Quay Tools uses `CitiesHarmony.API`; the Harmony library itself comes from the *
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.2.1
+- Fixed a compile error in the window code (missing field for the Undo/Redo/Reset bar).
+
+### v0.2.0
+- Fences follow automatic orientation changes of a segment (land side / water side stay correct).
+- New: Undo / Redo (buttons and Ctrl+Z / Ctrl+Y) and Reset to defaults in the editor.
+- New tool: **Add decal path** (width, shifts, colour; follows curves and heights of the quay).
+- Removing models now refreshes the window at once.
 
 ### v0.1.6
 - Segment fences are built from the quay's own two edge curves (blended at the fence position), so they follow the model exactly even when node corners are rotated.

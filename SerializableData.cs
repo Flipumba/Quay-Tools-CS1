@@ -3,22 +3,29 @@ using UnityEngine;
 
 namespace QuayTools
 {
-    /// <summary>Stores the fence settings inside the savegame.</summary>
+    /// <summary>Stores the fence settings and decal paths inside the savegame.</summary>
     public class SerializableData : SerializableDataExtensionBase
     {
-        private const string Key = "QuayTools.Fences";
+        private const string FenceKey = "QuayTools.Fences";
+        private const string DecalKey = "QuayTools.Decals";
 
         public override void OnLoadData()
         {
-            byte[] data = serializableDataManager.LoadData(Key);
+            History.Clear();
+
+            byte[] data = serializableDataManager.LoadData(FenceKey);
             FenceStore.Load(data);
             Debug.Log("[QuayTools] Loaded fence settings (" + (data == null ? 0 : data.Length) + " bytes)");
+
+            byte[] decals = serializableDataManager.LoadData(DecalKey);
+            DecalStore.Load(decals);
+            Debug.Log("[QuayTools] Loaded decal paths (" + (decals == null ? 0 : decals.Length) + " bytes)");
         }
 
         public override void OnSaveData()
         {
-            byte[] data = FenceStore.Save();
-            serializableDataManager.SaveData(Key, data);
+            serializableDataManager.SaveData(FenceKey, FenceStore.Save());
+            serializableDataManager.SaveData(DecalKey, DecalStore.Save());
         }
     }
 }

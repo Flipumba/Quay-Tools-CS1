@@ -129,12 +129,7 @@ namespace QuayTools
 
             // Inverting mirrors the quay model, so land and water swap sides. Fences we placed follow their
             // land/water meaning, hence they swap slots (the slots themselves are fixed to geometric sides).
-            if (FenceStore.Has(segmentId))
-            {
-                NetInfo leftFence = segs[segmentId].LeftFenceInfo;
-                segs[segmentId].LeftFenceInfo = segs[segmentId].RightFenceInfo;
-                segs[segmentId].RightFenceInfo = leftFence;
-            }
+            FenceStore.Reconcile(segmentId);
 
             ushort startNode = segs[segmentId].m_startNode;
             ushort endNode = segs[segmentId].m_endNode;

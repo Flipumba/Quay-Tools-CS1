@@ -16,7 +16,8 @@ namespace QuayTools
         {
             Invert = 0,
             RemovePedestrian = 1,
-            AddNetwork = 2
+            AddNetwork = 2,
+            Decal = 3
         }
 
         private static readonly Color HoverColor = new Color(0.10f, 0.70f, 1.00f, 0.55f);
@@ -53,7 +54,13 @@ namespace QuayTools
         /// <summary>Modes that already do something. The rest are shown disabled in the panel.</summary>
         public static bool IsImplemented(Mode mode)
         {
-            return mode == Mode.Invert || mode == Mode.AddNetwork;
+            return mode == Mode.Invert || mode == Mode.AddNetwork || mode == Mode.Decal;
+        }
+
+        /// <summary>Modes in which segments are selected first and edited in the window.</summary>
+        public static bool IsSelectMode(Mode mode)
+        {
+            return mode == Mode.AddNetwork || mode == Mode.Decal;
         }
 
         public static string HintFor(Mode mode)
@@ -62,6 +69,7 @@ namespace QuayTools
             {
                 case Mode.Invert: return Loc.T("hint_invert");
                 case Mode.AddNetwork: return Loc.T("hint_network");
+                case Mode.Decal: return Loc.T("hint_decal");
             }
             return Loc.T("hint_soon");
         }
@@ -79,7 +87,7 @@ namespace QuayTools
             _status = string.Empty;
             _cacheSegment = 0;
             if (mode == Mode.AddNetwork) FenceCatalog.Refresh();
-            else ClearSelection();
+            if (!IsSelectMode(mode)) ClearSelection(); // the selection is shared by the network and decal modes
         }
 
         protected override void OnEnable()
@@ -138,7 +146,7 @@ namespace QuayTools
 
             if (!overUi && Input.GetMouseButtonDown(1))
             {
-                if (CurrentMode == Mode.AddNetwork && _selected.Count > 0)
+                if (IsSelectMode(CurrentMode) && _selected.Count > 0)
                 {
                     ClearSelection();
                 }
@@ -149,11 +157,16 @@ namespace QuayTools
                 return;
             }
 
+            HandleUndoKeys();
             PruneSelection();
             UpdateHover(overUi);
 
             QuayToolPanel panel = QuayToolPanel.Instance;
-            if (panel != null) panel.SetStatus(_status);
+            if (panel != null)
+            {
+                panel.SetStatus(_status);
+                panel.SyncHistory();
+            }
 
             if (_hoverSegment != 0 && !overUi && Input.GetMouseButtonDown(0))
             {
@@ -214,6 +227,7 @@ namespace QuayTools
                     break;
 
                 case Mode.AddNetwork:
+                case Mode.Decal:
                     ToggleSelection();
                     break;
             }
@@ -251,47 +265,93 @@ namespace QuayTools
             _status = s;
         }
 
+        private List<ushort> SelectionCopy()
+        {
+            return new List<ushort>(_selected);
+        }
+
         public void ApplyModel(bool landSide, NetInfo model)
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
-            FenceApplier.SetModel(new List<ushort>(_selected), landSide, model, Report);
+            FenceApplier.SetModel(SelectionCopy(), landSide, model, Report);
         }
 
         public void ApplyOffset(bool landSide, bool horizontal, int value)
         {
             if (_selected.Count == 0) return;
-
-            for (int i = 0; i < _selected.Count; i++)
-            {
-                FenceSettings s = FenceStore.GetOrCreate(_selected[i]);
-                if (landSide)
-                {
-                    if (horizontal) s.LandH = value; else s.LandV = value;
-                }
-                else
-                {
-                    if (horizontal) s.WaterH = value; else s.WaterV = value;
-                }
-            }
-            FenceApplier.Refresh(new List<ushort>(_selected));
+            FenceApplier.SetOffset(SelectionCopy(), landSide, horizontal, value);
         }
 
         public void ApplyCap(bool atStart, bool value)
         {
             if (_selected.Count == 0) return;
-
-            for (int i = 0; i < _selected.Count; i++)
-            {
-                FenceSettings s = FenceStore.GetOrCreate(_selected[i]);
-                if (atStart) s.CapStart = value; else s.CapEnd = value;
-            }
-            FenceApplier.Refresh(new List<ushort>(_selected));
+            FenceApplier.SetCap(SelectionCopy(), atStart, value);
         }
 
         public void RemoveModels()
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
-            FenceApplier.ClearModels(new List<ushort>(_selected), Report);
+            FenceApplier.ClearModels(SelectionCopy(), Report);
+        }
+
+        // decal paths
+
+        internal void AddDecal(DecalSettings values)
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            FenceApplier.AddDecal(SelectionCopy(), values, Report);
+        }
+
+        public void RemoveDecal()
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            FenceApplier.RemoveDecal(SelectionCopy(), Report);
+        }
+
+        internal void EditDecal(string property, Action<DecalSettings> apply)
+        {
+            if (_selected.Count == 0) return;
+            FenceApplier.EditDecal(SelectionCopy(), property, apply);
+        }
+
+        // reset, undo, redo
+
+        /// <summary>Back to default settings of the current mode for the selected segments.</summary>
+        public void ResetSelection()
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            if (CurrentMode == Mode.Decal) FenceApplier.ResetDecals(SelectionCopy(), Report);
+            else FenceApplier.ResetFences(SelectionCopy(), Report);
+        }
+
+        public void Undo()
+        {
+            History.Undo(Report);
+        }
+
+        public void Redo()
+        {
+            History.Redo(Report);
+        }
+
+        /// <summary>Ctrl+Z = undo, Ctrl+Y or Ctrl+Shift+Z = redo, only while this tool is active and no text field has focus.</summary>
+        private void HandleUndoKeys()
+        {
+            if (!Settings.UndoHotkeysEnabled) return;
+            if (!(Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) return;
+
+            QuayToolPanel panel = QuayToolPanel.Instance;
+            if (panel != null && panel.IsTyping) return;
+
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            if (Input.GetKeyDown(KeyCode.Z))
+            {
+                if (shift) Redo(); else Undo();
+            }
+            else if (Input.GetKeyDown(KeyCode.Y))
+            {
+                Redo();
+            }
         }
 
         // ---------- drawing ----------
@@ -300,11 +360,11 @@ namespace QuayTools
         {
             base.RenderOverlay(cameraInfo);
 
-            if (CurrentMode == Mode.AddNetwork)
+            if (IsSelectMode(CurrentMode))
             {
                 for (int i = 0; i < _selected.Count; i++)
                 {
-                    DrawSelected(cameraInfo, _selected[i]);
+                    DrawSelected(cameraInfo, _selected[i], CurrentMode == Mode.AddNetwork);
                 }
             }
 
@@ -313,14 +373,15 @@ namespace QuayTools
             Color hover = _hoverIsChain ? ChainColor : HoverColor;
             for (int i = 0; i < _hoverList.Count; i++)
             {
-                if (CurrentMode == Mode.AddNetwork && _selected.Contains(_hoverList[i])) continue;
+                if (IsSelectMode(CurrentMode) && _selected.Contains(_hoverList[i])) continue;
                 QuayGeometry.DrawModel(cameraInfo, _hoverList[i], hover);
             }
         }
 
-        private static void DrawSelected(RenderManager.CameraInfo cameraInfo, ushort segmentId)
+        private static void DrawSelected(RenderManager.CameraInfo cameraInfo, ushort segmentId, bool fenceMode)
         {
             QuayGeometry.DrawModel(cameraInfo, segmentId, SelectedColor);
+            if (!fenceMode) return; // decal mode: only the selection highlight
 
             // thin lines on the two model edges: green = land side (model 1), blue = water side (model 2)
             QuayFrame f = QuayGeometry.GetFrame(segmentId);

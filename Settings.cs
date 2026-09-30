@@ -17,6 +17,7 @@ namespace QuayTools
         private static readonly SavedBool AnyNetwork;
         private static readonly SavedBool QuickFlip;
         private static readonly SavedBool Swap;
+        private static readonly SavedBool UndoKeys;
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
         public static readonly SavedInputKey ActivationKey;
@@ -32,6 +33,7 @@ namespace QuayTools
             AnyNetwork = new SavedBool("AllowAnyNetwork", FileName, false, true);
             QuickFlip = new SavedBool("QuickFlipEnabled", FileName, true, true);
             Swap = new SavedBool("SwapLandWater", FileName, false, true);
+            UndoKeys = new SavedBool("UndoHotkeys", FileName, true, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
                 SavedInputKey.Encode(KeyCode.Q, true, true, false), true);
@@ -56,6 +58,12 @@ namespace QuayTools
         public static bool SwapLandWater
         {
             get { return Swap.value; }
+        }
+
+        /// <summary>Ctrl+Z / Ctrl+Y inside the Quay Tools tool.</summary>
+        public static bool UndoHotkeysEnabled
+        {
+            get { return UndoKeys.value; }
         }
 
         public static bool QuickFlipEnabled
@@ -83,6 +91,11 @@ namespace QuayTools
             group.AddCheckbox("Swap land/water sides for fences (use only if fences go to the wrong side everywhere)", Swap.value, delegate (bool isChecked)
             {
                 Swap.value = isChecked;
+            });
+
+            group.AddCheckbox("Ctrl+Z / Ctrl+Y undo and redo while the Quay Tools window is open (turn off if it clashes with another undo mod)", UndoKeys.value, delegate (bool isChecked)
+            {
+                UndoKeys.value = isChecked;
             });
 
             group.AddCheckbox("Allow tools on any network segment (not only quays)", AnyNetwork.value, delegate (bool isChecked)
