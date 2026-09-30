@@ -18,6 +18,7 @@ namespace QuayTools
         private static readonly SavedBool QuickFlip;
         private static readonly SavedBool Swap;
         private static readonly SavedBool UndoKeys;
+        private static readonly SavedBool DecalSimple;
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
         public static readonly SavedInputKey ActivationKey;
@@ -34,6 +35,7 @@ namespace QuayTools
             QuickFlip = new SavedBool("QuickFlipEnabled", FileName, true, true);
             Swap = new SavedBool("SwapLandWater", FileName, false, true);
             UndoKeys = new SavedBool("UndoHotkeys", FileName, true, true);
+            DecalSimple = new SavedBool("DecalSimpleRendering", FileName, false, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
                 SavedInputKey.Encode(KeyCode.Q, true, true, false), true);
@@ -66,6 +68,12 @@ namespace QuayTools
             get { return UndoKeys.value; }
         }
 
+        /// <summary>Draw decal paths with a plain textured material instead of the decal prop's own material.</summary>
+        public static bool DecalSimpleRendering
+        {
+            get { return DecalSimple.value; }
+        }
+
         public static bool QuickFlipEnabled
         {
             get { return QuickFlip.value; }
@@ -96,6 +104,11 @@ namespace QuayTools
             group.AddCheckbox("Ctrl+Z / Ctrl+Y undo and redo while the Quay Tools window is open (turn off if it clashes with another undo mod)", UndoKeys.value, delegate (bool isChecked)
             {
                 UndoKeys.value = isChecked;
+            });
+
+            group.AddCheckbox("Draw decal paths with a simple textured material (try this if decals chosen in the list are invisible)", DecalSimple.value, delegate (bool isChecked)
+            {
+                DecalSimple.value = isChecked;
             });
 
             group.AddCheckbox("Allow tools on any network segment (not only quays)", AnyNetwork.value, delegate (bool isChecked)

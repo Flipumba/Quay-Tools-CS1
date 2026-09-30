@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.3.1**
+**Version: v0.3.2**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -72,6 +72,7 @@ Notes:
 
 - The decal is drawn with the material of the decal prop, so it looks like that prop (lighting, blending). Decals that need the terrain height map are not offered.
 - A decal is stored by the name of its prop. If the asset is missing when a save is loaded, that path is not drawn (a line in the log says so).
+- If a chosen decal stays invisible, turn on **Draw decal paths with a simple textured material** in the mod options (unlit, but uses the decal texture).
 - The log lines `[QuayTools] Decal catalog: N decal props` and `[QuayTools] Decal path built: ...` help to find problems.
 
 ### Undo, Redo and Reset
@@ -174,6 +175,11 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.3.2
+- Decal paths continue across nodes whose segment ends were moved away with Node Controller Renewal (between two segments that both have a path), so no gap is left around such nodes.
+- Option "Draw decal paths with a simple textured material" in the mod options: an unlit fallback for decals that stay invisible with the decal prop's own material. Extra diagnostics in the log.
+- Window: shorter labels, taller hint area so the texts fit.
 
 ### v0.3.1
 - Fixed a compile error (decal scale limits).

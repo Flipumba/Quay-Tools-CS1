@@ -14,7 +14,7 @@ namespace QuayTools
     {
         private const float PanelWidth = 330f;
         private const float ButtonHeight = 40f;
-        private const float ContentTop = 266f;
+        private const float ContentTop = 304f;
         private const float RowHeight = 36f;
         private const int MaxPopupRows = 8;
 
@@ -302,7 +302,7 @@ namespace QuayTools
             _hint.width = PanelWidth - 24f;
             _hint.wordWrap = true;
             _hint.autoSize = false;
-            _hint.height = 44f;
+            _hint.height = 82f;
 
             _status = MakeLabel(this, string.Empty, 12f, ContentTop, 0.8f);
             _status.textColor = new Color32(120, 220, 140, 255);
