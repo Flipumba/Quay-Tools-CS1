@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.2.1**
+**Version: v0.3.1**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -56,16 +56,23 @@ If the game (or another mod) flips the orientation of a segment by itself, for e
 
 ### Add Decal Path
 
-Adds a flat, coloured path strip along the middle of the top surface of a quay.
+Lays a ground decal (any decal prop you have: Workshop decals, cobblestones, markings, ...) along the middle of the top surface of a quay.
 
 1. Select the **Add decal path** mode. The selection is shared with the network-model mode.
 2. Select quay segments (**Shift** selects the whole connected quay).
-3. Set the **path width** (0.1–50 m), an optional **sideways shift** and **vertical offset** (±100 m), and one of six **colours**.
-4. Press **Add / apply path**. **Remove path** removes it from the selected segments.
+3. Choose a **decal** in the drop-down list (the first entry, *Plain colour*, draws a simple coloured strip).
+4. The strip is a **mask**: set its **width** (0.1–50 m), an optional **sideways shift** and a **vertical offset** (±100 m). The decal is cropped by the mask.
+5. **Decal scale** is the width of one tile of the decal texture (choosing a decal sets its natural size). The texture is repeated along and across the mask in tiles of this size, centred on the middle of the path.
+6. Pick a **tint**: it multiplies the colours of the decal (white = original colours) or fills the plain strip.
+7. Press **Add / apply path**. **Remove path** removes it from the selected segments.
 
-Changing a slider or the colour while segments with paths are selected updates those paths at once. The path is built from the two edge curves of the segment, so it follows the curves and heights of the quay, also after node edits made with Node Controller Renewal.
+Changing any control while segments with paths are selected updates those paths at once. The path is built from the two edge curves of the segment, so it follows the curves and heights of the quay, also after node edits made with Node Controller Renewal.
 
-The path is drawn by the mod itself (a flat mesh, not a game asset), so it has no lighting or texture. Its shader is chosen at start-up; the log line `[QuayTools] Decal paths use shader ...` shows which one.
+Notes:
+
+- The decal is drawn with the material of the decal prop, so it looks like that prop (lighting, blending). Decals that need the terrain height map are not offered.
+- A decal is stored by the name of its prop. If the asset is missing when a save is loaded, that path is not drawn (a line in the log says so).
+- The log lines `[QuayTools] Decal catalog: N decal props` and `[QuayTools] Decal path built: ...` help to find problems.
 
 ### Undo, Redo and Reset
 
@@ -85,6 +92,27 @@ At the bottom of the window in the network-model and decal modes:
 ## Planned / Incomplete Features
 
 - **Remove pedestrian path** — the button is visible but disabled. Planned approach: swapping to existing quay variants without a pedestrian lane, plus a crossed-out pedestrian icon above the segment.
+
+## Installation
+
+### Compiled mod (from a release)
+
+1. Install and enable the required mod **Harmony (Mod Dependency)** (Steam Workshop ID `2040656402`). See [Dependencies](#dependencies).
+2. Copy the folder `QuayTools` (with `QuayTools.dll`, `UnifiedUILib.dll`, `CitiesHarmony.API.dll` and the `Icons` folder, all together) to:
+
+   ```text
+   %LOCALAPPDATA%\Colossal Order\Cities_Skylines\Addons\Mods\
+   ```
+
+   so that the result is `...\Addons\Mods\QuayTools\QuayTools.dll`.
+3. Start the game, open **Content Manager → Mods** and enable **Quay Tools**.
+4. Load a map. The tool is opened with the **Quay Tools** button in UnifiedUI (or a small floating button if UnifiedUI is not installed). The default activation hotkey is **Ctrl+Shift+Q**; it can be changed in UnifiedUI.
+
+To update, replace the files in the same folder while the game is closed. To uninstall, disable the mod and delete the folder; savegames still load, the mod's data in them is ignored.
+
+### From the Steam Workshop
+
+Subscribe to Quay Tools; the required Harmony mod is installed automatically as its dependency. Enable both in **Content Manager → Mods**.
 
 ## Building
 
@@ -119,22 +147,41 @@ All of them must stay together in the mod folder. Enable **Quay Tools** in **Con
 
 ## Dependencies
 
-### Harmony (required)
+### Required
 
-Quay Tools uses `CitiesHarmony.API`; the Harmony library itself comes from the **Harmony (Mod Dependency)** mod (Workshop ID `2040656402`). It must be subscribed to and enabled, and added as a required item when publishing Quay Tools to the Steam Workshop.
+- **Harmony (Mod Dependency)** — Steam Workshop ID `2040656402`. Quay Tools uses `CitiesHarmony.API`; the Harmony library itself comes from this mod. It must be subscribed to and enabled, and added as a required item when publishing Quay Tools to the Steam Workshop.
+- **Cities: Skylines** (current version) and quay networks (`QuayAI`) to work on.
 
-### UnifiedUI (optional)
+### Optional
 
-`Lib/UnifiedUILib.dll` is the UnifiedUI helper library (MIT license, © 2022 UnifiedUI), shipped next to the mod DLL so Quay Tools can talk to the UnifiedUI mod. UnifiedUI icons are 64×64 px, light glyphs on a transparent background.
+- **UnifiedUI** — adds the tool button and hotkey to the UnifiedUI toolbar. Without it a small floating button is used. `Lib/UnifiedUILib.dll` is the UnifiedUI helper library (MIT license, © 2022 UnifiedUI), shipped next to the mod DLL so Quay Tools can talk to the UnifiedUI mod. UnifiedUI icons are 64×64 px, light glyphs on a transparent background.
+- **Node Controller Renewal (NCR)** — not needed, but supported: fences and decal paths follow nodes edited with it.
+- **Decal props** (Workshop or your own) — needed only to have something to choose in the *Add decal path* list; network fence models for *Add network model* likewise come from the game or from installed assets.
+
+### Build dependencies
+
+Only needed to compile the mod yourself (restored by NuGet, except the game DLLs and `UnifiedUILib.dll`):
+
+- `CitiesHarmony.API` and `CitiesHarmony.Harmony` (NuGet, version 2.x)
+- `Microsoft.NETFramework.ReferenceAssemblies` (NuGet)
+- `Lib/UnifiedUILib.dll` (included in the repository)
+- Game assemblies from `Cities_Data\Managed`: `Assembly-CSharp.dll`, `ICities.dll`, `ColossalManaged.dll`, `UnityEngine.dll` (path set by `CS1ManagedPath` in the project)
 
 ## Compatibility and status
 
-- v0.0.1 was compiled and tested in-game.
-- **v0.1.0 has not been fully tested yet.** The new fence placement, offsets, side mapping and the new window were written from analysis of the game's `Assembly-CSharp.dll`. Please report problems together with `output_log.txt` (lines starting with `[QuayTools]`).
+- The current version has been tested in-game. Please report problems together with `output_log.txt` (lines starting with `[QuayTools]`).
 - Game APIs used: `QuayAI`, `ToolBase` (`OnEnable`, `OnDisable`, `OnToolUpdate`, `RenderOverlay`), `OverlayEffect.DrawBezier`, `NetSegment.CalculateCorner`, `NetNode.GetEndFences`, `PrefabCollection<NetInfo>`, `SerializableDataExtensionBase`, cs UI components (`UISlider`, `UIScrollablePanel`, ...).
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.3.1
+- Fixed a compile error (decal scale limits).
+
+### v0.3.0
+- Decal paths now use real decal props: drop-down list of decals, tiling along and across the path, cropping by the mask (width, sideways shift, vertical offset), tint colour and decal scale. Plain colour strip is still available.
+- Decal paths on nodes edited with Node Controller Renewal: unusable corners no longer hide the path (fallback to the node centre line), failed builds are retried and logged.
+- Reset keeps the chosen decal, like it keeps fence models.
 
 ### v0.2.1
 - Fixed a compile error in the window code (missing field for the Undo/Redo/Reset bar).

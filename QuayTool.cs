@@ -87,6 +87,7 @@ namespace QuayTools
             _status = string.Empty;
             _cacheSegment = 0;
             if (mode == Mode.AddNetwork) FenceCatalog.Refresh();
+            if (mode == Mode.Decal) DecalCatalog.Refresh();
             if (!IsSelectMode(mode)) ClearSelection(); // the selection is shared by the network and decal modes
         }
 
@@ -95,6 +96,7 @@ namespace QuayTools
             base.OnEnable();
             Instance = this;
             if (CurrentMode == Mode.AddNetwork) FenceCatalog.Refresh();
+            if (CurrentMode == Mode.Decal) DecalCatalog.Refresh();
             if (_ready) QuayToolPanel.ShowPanel();
         }
 

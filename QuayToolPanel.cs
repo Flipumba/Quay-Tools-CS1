@@ -23,9 +23,22 @@ namespace QuayTools
         private static readonly string[] TitleKeys = { "mode_invert", "mode_nopeds", "mode_network", "mode_decal" };
         private static readonly string[] IconFiles = { "Invert.png", "NoPedestrian.png", "Network.png", "Decal.png" };
 
+        /// <summary>One row of a drop-down list (Tag: NetInfo for fence models, DecalEntry for decals).</summary>
+        private class PickItem
+        {
+            public string Title;
+            public UITextureAtlas Atlas;
+            public string Thumb;
+            public object Tag;
+        }
+
         private class PickerUi
         {
             public bool Land;
+            public UIComponent Parent;
+            public string EmptyText;
+            public Func<List<PickItem>> GetItems;
+            public Action<PickItem> OnPicked; // null item = the "empty" row
             public UILabel Title;
             public UIButton Header;
             public UISprite Icon;
@@ -56,8 +69,9 @@ namespace QuayTools
         private UIPanel _decal;
         private float _decalHeight;
         private UILabel _decalSel, _decalState;
-        private UISlider _dWidth, _dLateral, _dLift;
-        private UITextField _dWidthV, _dLateralV, _dLiftV;
+        private UISlider _dWidth, _dScale, _dLateral, _dLift;
+        private UITextField _dWidthV, _dScaleV, _dLateralV, _dLiftV;
+        private PickerUi _decalUi;
         private UIButton[] _dColors;
         private UIButton _dAdd, _dRemove;
         private readonly DecalSettings _brush = new DecalSettings(); // values used when a path is added; edits apply to existing paths
@@ -374,33 +388,36 @@ namespace QuayTools
             PickerUi ui = new PickerUi();
             ui.Land = land;
 
+            ui.Parent = _add;
+            ui.EmptyText = Loc.T("empty");
+            ui.GetItems = delegate ()
+            {
+                List<PickItem> items = new List<PickItem>();
+                List<FenceEntry> list = FenceCatalog.Entries;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    PickItem it = new PickItem();
+                    it.Title = list[i].Title;
+                    it.Atlas = list[i].Info.m_Atlas;
+                    it.Thumb = list[i].Info.m_Thumbnail;
+                    it.Tag = list[i].Info;
+                    items.Add(it);
+                }
+                return items;
+            };
+            bool landCaptured = land;
+            ui.OnPicked = delegate (PickItem item)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null && !_loading) tool.ApplyModel(landCaptured, item == null ? null : (NetInfo)item.Tag);
+            };
+
             ui.Title = MakeLabel(_add, Loc.T(land ? "model1" : "model2"), 12f, y, 0.85f);
             ui.Title.textColor = land ? new Color32(140, 255, 160, 255) : new Color32(140, 200, 255, 255);
             y += 20f;
 
-            ui.Header = _add.AddUIComponent<UIButton>();
-            ui.Header.width = PanelWidth - 20f;
-            ui.Header.height = 38f;
-            ui.Header.relativePosition = new Vector3(10f, y);
-            StyleButton(ui.Header);
-
-            ui.Icon = ui.Header.AddUIComponent<UISprite>();
-            ui.Icon.size = new Vector2(32f, 32f);
-            ui.Icon.relativePosition = new Vector3(6f, 3f);
-            ui.Icon.isInteractive = false;
-            ui.Icon.isVisible = false;
-
-            ui.Name = ui.Header.AddUIComponent<UILabel>();
-            ui.Name.textScale = 0.8f;
-            ui.Name.autoSize = false;
-            ui.Name.width = PanelWidth - 20f - 60f;
-            ui.Name.height = 20f;
-            ui.Name.relativePosition = new Vector3(46f, 10f);
-            ui.Name.isInteractive = false;
-            ui.Name.text = Loc.T("empty");
-
+            BuildHeader(_add, ui, y);
             PickerUi captured = ui;
-            ui.Header.eventClicked += delegate (UIComponent c, UIMouseEventParameter p) { TogglePopup(captured); };
             y += 42f;
 
             float sliderWidth = PanelWidth - 24f;
@@ -424,11 +441,39 @@ namespace QuayTools
             return ui;
         }
 
+        /// <summary>The button that shows the chosen entry (icon + name) and opens the drop-down list.</summary>
+        private void BuildHeader(UIComponent parent, PickerUi ui, float y)
+        {
+            ui.Header = parent.AddUIComponent<UIButton>();
+            ui.Header.width = PanelWidth - 20f;
+            ui.Header.height = 38f;
+            ui.Header.relativePosition = new Vector3(10f, y);
+            StyleButton(ui.Header);
+
+            ui.Icon = ui.Header.AddUIComponent<UISprite>();
+            ui.Icon.size = new Vector2(32f, 32f);
+            ui.Icon.relativePosition = new Vector3(6f, 3f);
+            ui.Icon.isInteractive = false;
+            ui.Icon.isVisible = false;
+
+            ui.Name = ui.Header.AddUIComponent<UILabel>();
+            ui.Name.textScale = 0.8f;
+            ui.Name.autoSize = false;
+            ui.Name.width = PanelWidth - 20f - 60f;
+            ui.Name.height = 20f;
+            ui.Name.relativePosition = new Vector3(46f, 10f);
+            ui.Name.isInteractive = false;
+            ui.Name.text = ui.EmptyText;
+
+            PickerUi captured = ui;
+            ui.Header.eventClicked += delegate (UIComponent c, UIMouseEventParameter p) { TogglePopup(captured); };
+        }
+
         private void BuildPopup(PickerUi ui)
         {
             float top = ui.Header.relativePosition.y + ui.Header.height + 2f;
 
-            UIScrollablePanel popup = _add.AddUIComponent<UIScrollablePanel>();
+            UIScrollablePanel popup = ui.Parent.AddUIComponent<UIScrollablePanel>();
             popup.width = PanelWidth - 20f;
             popup.height = 200f;
             popup.relativePosition = new Vector3(10f, top);
@@ -443,7 +488,7 @@ namespace QuayTools
             popup.isVisible = false;
             ui.Popup = popup;
 
-            UIScrollbar bar = _add.AddUIComponent<UIScrollbar>();
+            UIScrollbar bar = ui.Parent.AddUIComponent<UIScrollbar>();
             bar.width = 12f;
             bar.height = popup.height;
             bar.orientation = UIOrientation.Vertical;
@@ -482,7 +527,7 @@ namespace QuayTools
 
             AddRow(ui, null);
 
-            List<FenceEntry> list = FenceCatalog.Entries;
+            List<PickItem> list = ui.GetItems();
             for (int i = 0; i < list.Count; i++)
             {
                 AddRow(ui, list[i]);
@@ -493,7 +538,7 @@ namespace QuayTools
             ui.Bar.height = ui.Popup.height;
         }
 
-        private void AddRow(PickerUi ui, FenceEntry entry)
+        private void AddRow(PickerUi ui, PickItem entry)
         {
             UIButton row = ui.Popup.AddUIComponent<UIButton>();
             row.width = ui.Popup.width - 16f;
@@ -504,15 +549,15 @@ namespace QuayTools
             row.textVerticalAlignment = UIVerticalAlignment.Middle;
             row.textPadding = new RectOffset(46, 0, 0, 0);
 
-            string title = entry == null ? Loc.T("empty") : entry.Title;
+            string title = entry == null ? ui.EmptyText : entry.Title;
             row.text = title.Length > 34 ? title.Substring(0, 33) + "…" : title;
             row.tooltip = title;
 
-            if (entry != null && entry.Info.m_Atlas != null && !string.IsNullOrEmpty(entry.Info.m_Thumbnail))
+            if (entry != null && entry.Atlas != null && !string.IsNullOrEmpty(entry.Thumb))
             {
                 UISprite icon = row.AddUIComponent<UISprite>();
-                icon.atlas = entry.Info.m_Atlas;
-                icon.spriteName = entry.Info.m_Thumbnail;
+                icon.atlas = entry.Atlas;
+                icon.spriteName = entry.Thumb;
                 icon.size = new Vector2(30f, 30f);
                 icon.relativePosition = new Vector3(8f, 3f);
                 icon.isInteractive = false;
@@ -521,15 +566,13 @@ namespace QuayTools
             PickerUi wheelUi = ui;
             row.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(wheelUi, e); };
 
-            NetInfo picked = entry == null ? null : entry.Info;
+            PickItem picked = entry;
             PickerUi captured = ui;
             row.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
             {
-                SetHeader(captured, picked);
+                SetHeaderItem(captured, picked);
                 ClosePopup();
-
-                QuayTool tool = QuayTool.Instance;
-                if (tool != null && !_loading) tool.ApplyModel(captured.Land, picked);
+                if (!_loading) captured.OnPicked(picked);
             };
         }
 
@@ -573,8 +616,7 @@ namespace QuayTools
         {
             if (info == null)
             {
-                ui.Name.text = Loc.T("empty");
-                ui.Icon.isVisible = false;
+                SetHeaderItem(ui, null);
                 return;
             }
 
@@ -589,12 +631,29 @@ namespace QuayTools
                 // keep the prefab name
             }
 
-            ui.Name.text = title.Length > 34 ? title.Substring(0, 33) + "…" : title;
+            PickItem item = new PickItem();
+            item.Title = title;
+            item.Atlas = info.m_Atlas;
+            item.Thumb = info.m_Thumbnail;
+            item.Tag = info;
+            SetHeaderItem(ui, item);
+        }
 
-            if (info.m_Atlas != null && !string.IsNullOrEmpty(info.m_Thumbnail))
+        private void SetHeaderItem(PickerUi ui, PickItem item)
+        {
+            if (item == null)
             {
-                ui.Icon.atlas = info.m_Atlas;
-                ui.Icon.spriteName = info.m_Thumbnail;
+                ui.Name.text = ui.EmptyText;
+                ui.Icon.isVisible = false;
+                return;
+            }
+
+            ui.Name.text = item.Title.Length > 34 ? item.Title.Substring(0, 33) + "…" : item.Title;
+
+            if (item.Atlas != null && !string.IsNullOrEmpty(item.Thumb))
+            {
+                ui.Icon.atlas = item.Atlas;
+                ui.Icon.spriteName = item.Thumb;
                 ui.Icon.isVisible = true;
             }
             else
@@ -769,7 +828,7 @@ namespace QuayTools
             float barY = ContentTop + section;
             float need = select ? barY + 42f + 24f : ContentTop + 30f;
 
-            if (addMode && _openPopup != null)
+            if (select && _openPopup != null)
             {
                 float popupBottom = ContentTop + _openPopup.Popup.relativePosition.y + _openPopup.Popup.height + 10f;
                 need = Mathf.Max(need, popupBottom);
@@ -785,6 +844,30 @@ namespace QuayTools
 
         // ---------- decal path section ----------
 
+        /// <summary>A label, a slider and a value field (metres) in one block; returns the y of the next block.</summary>
+        private float MakeValueRow(UIComponent parent, float y, string labelKey, float min, float max, float reset,
+                                   out UISlider slider, out UITextField field, Action<int> onValue)
+        {
+            UISlider sl = MakeSlider(parent, 12f, y + 20f, PanelWidth - 24f, min, max, reset);
+            UITextField fl = null;
+            MakeLabel(parent, Loc.T(labelKey), 12f, y, 0.72f);
+            MakeLabel(parent, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
+            fl = MakeField(parent, PanelWidth - 94f, y - 1f, delegate (float m) { OnFieldFor(sl, fl, m); }, max * FenceStore.Unit);
+            fl.text = FormatOffset(reset);
+
+            UITextField flCaptured = fl;
+            sl.eventValueChanged += delegate (UIComponent c, float v)
+            {
+                int units = Mathf.RoundToInt(v);
+                flCaptured.text = FormatOffset(units);
+                onValue(units);
+            };
+
+            slider = sl;
+            field = fl;
+            return y + 44f;
+        }
+
         private void BuildDecalSection()
         {
             _decal = AddUIComponent<UIPanel>();
@@ -793,40 +876,43 @@ namespace QuayTools
             _decal.isVisible = false;
 
             float y = 0f;
-            float sliderWidth = PanelWidth - 24f;
             _decalSel = MakeLabel(_decal, string.Empty, 12f, y, 0.85f);
             y += 26f;
 
-            MakeLabel(_decal, Loc.T("dwidth"), 12f, y, 0.72f);
-            MakeLabel(_decal, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
-            _dWidth = MakeSlider(_decal, 12f, y + 20f, sliderWidth, DecalStore.MinWidth, DecalStore.MaxWidth, DecalSettings.DefaultWidth);
-            _dWidthV = MakeField(_decal, PanelWidth - 94f, y - 1f, delegate (float m) { OnFieldFor(_dWidth, _dWidthV, m); }, DecalStore.MaxWidth * FenceStore.Unit);
-            _dWidthV.text = FormatOffset(DecalSettings.DefaultWidth);
-            _dWidth.eventValueChanged += delegate (UIComponent c, float v)
+            // decal chooser
+            _decalUi = new PickerUi();
+            _decalUi.Parent = _decal;
+            _decalUi.EmptyText = Loc.T("decal_solid");
+            _decalUi.GetItems = delegate ()
             {
-                OnDecalValue("width", Mathf.RoundToInt(v), _dWidthV, delegate (DecalSettings d, int u) { d.Width = u; });
+                List<PickItem> items = new List<PickItem>();
+                List<DecalEntry> list = DecalCatalog.Entries;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    PickItem it = new PickItem();
+                    it.Title = list[i].Title;
+                    it.Atlas = list[i].Info.m_Atlas;
+                    it.Thumb = list[i].Info.m_Thumbnail;
+                    it.Tag = list[i];
+                    items.Add(it);
+                }
+                return items;
             };
+            _decalUi.OnPicked = OnDecalPicked;
+
+            MakeLabel(_decal, Loc.T("dprop"), 12f, y, 0.85f);
+            y += 20f;
+            BuildHeader(_decal, _decalUi, y);
             y += 44f;
 
-            MakeLabel(_decal, Loc.T("dlateral"), 12f, y, 0.72f);
-            MakeLabel(_decal, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
-            _dLateral = MakeSlider(_decal, 12f, y + 20f, sliderWidth, -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f);
-            _dLateralV = MakeField(_decal, PanelWidth - 94f, y - 1f, delegate (float m) { OnFieldFor(_dLateral, _dLateralV, m); }, FenceStore.MaxUnits * FenceStore.Unit);
-            _dLateral.eventValueChanged += delegate (UIComponent c, float v)
-            {
-                OnDecalValue("lateral", Mathf.RoundToInt(v), _dLateralV, delegate (DecalSettings d, int u) { d.Lateral = u; });
-            };
-            y += 44f;
-
-            MakeLabel(_decal, Loc.T("dlift"), 12f, y, 0.72f);
-            MakeLabel(_decal, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
-            _dLift = MakeSlider(_decal, 12f, y + 20f, sliderWidth, -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f);
-            _dLiftV = MakeField(_decal, PanelWidth - 94f, y - 1f, delegate (float m) { OnFieldFor(_dLift, _dLiftV, m); }, FenceStore.MaxUnits * FenceStore.Unit);
-            _dLift.eventValueChanged += delegate (UIComponent c, float v)
-            {
-                OnDecalValue("lift", Mathf.RoundToInt(v), _dLiftV, delegate (DecalSettings d, int u) { d.Lift = u; });
-            };
-            y += 44f;
+            y = MakeValueRow(_decal, y, "dwidth", DecalStore.MinWidth, DecalStore.MaxWidth, DecalSettings.DefaultWidth, out _dWidth, out _dWidthV,
+                delegate (int u) { OnDecalValue("width", u, delegate (DecalSettings d, int v) { d.Width = v; }); });
+            y = MakeValueRow(_decal, y, "dscale", DecalStore.MinScale, DecalStore.MaxScale, DecalSettings.DefaultScale, out _dScale, out _dScaleV,
+                delegate (int u) { OnDecalValue("scale", u, delegate (DecalSettings d, int v) { d.Scale = v; }); });
+            y = MakeValueRow(_decal, y, "dlateral", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _dLateral, out _dLateralV,
+                delegate (int u) { OnDecalValue("lateral", u, delegate (DecalSettings d, int v) { d.Lateral = v; }); });
+            y = MakeValueRow(_decal, y, "dlift", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _dLift, out _dLiftV,
+                delegate (int u) { OnDecalValue("lift", u, delegate (DecalSettings d, int v) { d.Lift = v; }); });
 
             MakeLabel(_decal, Loc.T("dcolor"), 12f, y, 0.72f);
             y += 18f;
@@ -869,6 +955,7 @@ namespace QuayTools
             {
                 QuayTool tool = QuayTool.Instance;
                 if (tool == null) return;
+                ClosePopup();
                 tool.AddDecal(_brush);
             };
             y += 38f;
@@ -888,6 +975,66 @@ namespace QuayTools
             y += 38f;
 
             _decalHeight = y;
+
+            // the list is created last so that it is drawn above the controls below its button
+            BuildPopup(_decalUi);
+        }
+
+        /// <summary>A decal was chosen in the list: remember it, use its natural size as tile size, apply it to existing paths.</summary>
+        private void OnDecalPicked(PickItem item)
+        {
+            DecalEntry entry = item == null ? null : (DecalEntry)item.Tag;
+            string prop = entry == null ? null : entry.Info.name;
+            int scale = _brush.Scale;
+
+            if (entry != null)
+            {
+                scale = Mathf.Clamp(Mathf.RoundToInt(entry.NaturalSize / FenceStore.Unit), DecalStore.MinScale, DecalStore.MaxScale);
+                bool was = _loading;
+                _loading = true; // do not send the scale as a separate edit
+                _dScale.value = scale;
+                _dScaleV.text = FormatOffset(scale);
+                _loading = was;
+                _brush.Scale = scale;
+            }
+            _brush.Prop = prop;
+
+            QuayTool tool = QuayTool.Instance;
+            if (tool == null) return;
+            int applyScale = scale;
+            bool setScale = entry != null;
+            tool.EditDecal("prop", delegate (DecalSettings d)
+            {
+                d.Prop = prop;
+                if (setScale) d.Scale = applyScale;
+            });
+        }
+
+        private void ShowBrushHeader()
+        {
+            PropInfo info = DecalCatalog.Find(_brush.Prop);
+            if (info == null)
+            {
+                SetHeaderItem(_decalUi, null);
+                return;
+            }
+
+            string title = info.name;
+            try
+            {
+                string t = info.GetUncheckedLocalizedTitle();
+                if (!string.IsNullOrEmpty(t)) title = t;
+            }
+            catch (Exception)
+            {
+                // keep the prefab name
+            }
+
+            PickItem item = new PickItem();
+            item.Title = title;
+            item.Atlas = info.m_Atlas;
+            item.Thumb = info.m_Thumbnail;
+            SetHeaderItem(_decalUi, item);
         }
 
         private void UpdateColorButtons()
@@ -905,9 +1052,8 @@ namespace QuayTools
         }
 
         /// <summary>A decal slider moved: remember it for the next "add" and apply it to the selected paths.</summary>
-        private void OnDecalValue(string property, int units, UITextField field, Action<DecalSettings, int> set)
+        private void OnDecalValue(string property, int units, Action<DecalSettings, int> set)
         {
-            field.text = FormatOffset(units);
             set(_brush, units);
             if (_loading) return;
 
@@ -947,16 +1093,21 @@ namespace QuayTools
                     _brush.Lateral = first.Lateral;
                     _brush.Lift = first.Lift;
                     _brush.ColorIndex = first.ColorIndex;
+                    _brush.Prop = first.Prop;
+                    _brush.Scale = first.Scale;
 
                     _dWidth.value = first.Width;
+                    _dScale.value = first.Scale;
                     _dLateral.value = first.Lateral;
                     _dLift.value = first.Lift;
                     UpdateColorButtons();
                 }
 
                 _dWidthV.text = FormatOffset(_dWidth.value);
+                _dScaleV.text = FormatOffset(_dScale.value);
                 _dLateralV.text = FormatOffset(_dLateral.value);
                 _dLiftV.text = FormatOffset(_dLift.value);
+                ShowBrushHeader();
                 _decalState.text = Loc.F("decal_state", have, count);
             }
             finally
@@ -971,8 +1122,12 @@ namespace QuayTools
             _loading = true;
             try
             {
+                string keepProp = _brush.Prop; // like fence models, the chosen decal stays
                 _brush.ResetToDefaults();
+                _brush.Prop = keepProp;
                 _dWidth.value = _brush.Width;
+                _dScale.value = _brush.Scale;
+                _dScaleV.text = FormatOffset(_dScale.value);
                 _dLateral.value = _brush.Lateral;
                 _dLift.value = _brush.Lift;
                 _dWidthV.text = FormatOffset(_dWidth.value);
@@ -989,6 +1144,8 @@ namespace QuayTools
         private void SetDecalControlsEnabled(bool enabled)
         {
             _dWidth.isEnabled = enabled;
+            _dScale.isEnabled = enabled;
+            _decalUi.Header.isEnabled = enabled;
             _dLateral.isEnabled = enabled;
             _dLift.isEnabled = enabled;
             _dAdd.isEnabled = enabled;
@@ -1071,7 +1228,7 @@ namespace QuayTools
             get
             {
                 if (!_built) return false;
-                UITextField[] fields = { _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dLateralV, _dLiftV };
+                UITextField[] fields = { _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dLateralV, _dLiftV };
                 for (int i = 0; i < fields.Length; i++)
                 {
                     if (fields[i] != null && fields[i].hasFocus) return true;
