@@ -22,6 +22,7 @@ namespace QuayTools
         private static readonly SavedBool DecalShadows;
         private static readonly SavedBool BridgeCentre;
         private static readonly SavedBool MarkEditedValue;
+        private static readonly SavedInt IconSizeValue;
         private static readonly SavedString[] FavValues = new SavedString[3];
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
@@ -43,6 +44,7 @@ namespace QuayTools
             DecalShadows = new SavedBool("DecalReceiveShadows", FileName, true, true);
             BridgeCentre = new SavedBool("BridgeCentreLine", FileName, true, true);
             MarkEditedValue = new SavedBool("MarkEdited", FileName, true, true);
+            IconSizeValue = new SavedInt("MarkIconSize", FileName, 2, true);
             for (int i = 0; i < FavValues.Length; i++) FavValues[i] = new SavedString("Favourites" + i, FileName, string.Empty, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
@@ -92,6 +94,12 @@ namespace QuayTools
         public static bool BridgeCentreLine
         {
             get { return BridgeCentre.value; }
+        }
+
+        /// <summary>Size of the floating tool icons above edited segments: 1 (small), 2 (default, twice the former size), 3 (large).</summary>
+        public static int MarkIconSize
+        {
+            get { return Mathf.Clamp(IconSizeValue.value, 1, 3); }
         }
 
         /// <summary>While the tool is active, segments edited by the mod are highlighted and carry tool icons.</summary>
@@ -156,6 +164,11 @@ namespace QuayTools
             group.AddCheckbox("While the tool is active, highlight edited segments and show tool icons above them", MarkEditedValue.value, delegate (bool isChecked)
             {
                 MarkEditedValue.value = isChecked;
+            });
+
+            group.AddDropdown("Size of the floating tool icons above edited segments", new string[] { "1 (small)", "2 (default)", "3 (large)" }, MarkIconSize - 1, delegate (int sel)
+            {
+                IconSizeValue.value = sel + 1;
             });
 
             group.AddCheckbox("Allow tools on any network segment (not only quays)", AnyNetwork.value, delegate (bool isChecked)

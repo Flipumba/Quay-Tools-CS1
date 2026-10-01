@@ -122,13 +122,14 @@ namespace QuayTools
                 }
                 if (count == 0) continue;
 
-                float size = Mathf.Clamp(1600f / sp.z, 16f, 30f);
-                float gap = 2f;
+                float mul = Settings.MarkIconSize;
+                float size = Mathf.Clamp(1600f / sp.z * mul, 16f * mul, 30f * mul);
+                float gap = 2f * mul;
                 float total = count * size + (count - 1) * gap;
                 float x = sp.x - total * 0.5f;
 
                 GUI.color = new Color(0.08f, 0.1f, 0.14f, 0.8f);
-                GUI.DrawTexture(new Rect(x - 3f, sy - size - 3f, total + 6f, size + 6f), Texture2D.whiteTexture);
+                GUI.DrawTexture(new Rect(x - 3f * mul, sy - size - 3f * mul, total + 6f * mul, size + 6f * mul), Texture2D.whiteTexture);
                 GUI.color = Color.white;
 
                 for (int b = 0; b < Bits.Length; b++)

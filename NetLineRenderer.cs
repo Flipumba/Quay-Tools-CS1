@@ -10,9 +10,10 @@ namespace QuayTools
     /// <summary>
     /// Draws the network-model lines of quay segments. Every line is one network model (a fence, a wall...) that follows
     /// the same curve as a prop line (from the middle of the start node to the middle of the end node). The model is
-    /// drawn by the game's own routine for fence pieces (NetSegment.RenderSegments), called through reflection with
-    /// render data that this class prepares, so shaders, LOD meshes, colours and terrain handling stay the game's.
-    /// A model is turned around by the game's own "turn around" flag (a half turn, never a mirror image).
+    /// drawn the way the game draws fence pieces (the same shader inputs as NetSegment.RenderSegments, submitted
+    /// directly with Graphics.DrawMesh, so other mods' patches of that routine cannot interfere), with render data
+    /// that this class prepares like NetSegment.RefreshRoadFence. A model is turned around by the game's own
+    /// "negated mesh scale" (a half turn, never a mirror image).
     /// Main thread only. Lives on the QuayToolsController game object.
     /// </summary>
     public class NetLineRenderer : MonoBehaviour
@@ -25,8 +26,9 @@ namespace QuayTools
 
         private class Part
         {
-            public object Segment;     // boxed NetSegment copy whose flags2 carry the turn-around bit
-            public object[] Args;      // camera, model, render data, wOffset, NetManager
+            public NetInfo.Segment[] Segs;   // the model's mesh pieces that are visible for the flags of this piece
+            public RenderManager.Instance Data;
+            public bool Turn;                // half turn of the model (the game's own turn-around)
             public Vector3 Centre;
             public float Radius;
         }
@@ -49,8 +51,9 @@ namespace QuayTools
         private int _cursor;
         private int _logged;
 
-        private static MethodInfo _renderSegments;
+        private static MethodInfo _checkFlags;
         private static FieldInfo _flags2;
+        private static FieldInfo _materialBlock, _idLeft, _idRight, _idScale, _idObject, _idColor, _idObjectColor, _idSurfA, _idSurfB, _idSurfMap, _idHeight, _idHeightMap;
         private static MethodInfo _heightMapping, _surfaceMapping, _windSpeed;
         private static bool _reflectionDone;
         private static bool _failed;
@@ -73,16 +76,31 @@ namespace QuayTools
             _reflectionDone = true;
 
             BindingFlags all = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-            _renderSegments = typeof(NetSegment).GetMethod("RenderSegments", all);
+            _checkFlags = typeof(NetInfo.Segment).GetMethod("CheckFlags", all);
             _flags2 = typeof(NetSegment).GetField("m_flags2", all);
             _heightMapping = typeof(TerrainManager).GetMethod("GetHeightMapping", all);
             _surfaceMapping = typeof(TerrainManager).GetMethod("GetSurfaceMapping", all);
             _windSpeed = typeof(WeatherManager).GetMethod("GetWindSpeed", all, null, new Type[] { typeof(Vector3) }, null);
 
-            if (_renderSegments == null || _flags2 == null || _renderSegments.GetParameters().Length != 5)
+            _materialBlock = typeof(NetManager).GetField("m_materialBlock", all);
+            _idLeft = typeof(NetManager).GetField("ID_LeftMatrix", all);
+            _idRight = typeof(NetManager).GetField("ID_RightMatrix", all);
+            _idScale = typeof(NetManager).GetField("ID_MeshScale", all);
+            _idObject = typeof(NetManager).GetField("ID_ObjectIndex", all);
+            _idColor = typeof(NetManager).GetField("ID_Color", all);
+            _idObjectColor = typeof(NetManager).GetField("ID_ObjectColor", all);
+            _idSurfA = typeof(NetManager).GetField("ID_SurfaceTexA", all);
+            _idSurfB = typeof(NetManager).GetField("ID_SurfaceTexB", all);
+            _idSurfMap = typeof(NetManager).GetField("ID_SurfaceMapping", all);
+            _idHeight = typeof(NetManager).GetField("ID_HeightMap", all);
+            _idHeightMap = typeof(NetManager).GetField("ID_HeightMapping", all);
+
+            if (_checkFlags == null || _checkFlags.GetParameters().Length != 3 || _flags2 == null || _materialBlock == null || _idLeft == null ||
+                _idRight == null || _idScale == null || _idObject == null || _idColor == null || _idObjectColor == null || _idSurfA == null ||
+                _idSurfB == null || _idSurfMap == null || _idHeight == null || _idHeightMap == null)
             {
                 _failed = true;
-                Debug.LogWarning("[QuayTools] NetSegment.RenderSegments / m_flags2 not found or changed: network-model lines are unavailable");
+                Debug.LogWarning("[QuayTools] NetInfo.Segment.CheckFlags / NetManager shader ids not found or changed: network-model lines are unavailable");
             }
         }
 
@@ -380,10 +398,33 @@ namespace QuayTools
             Type ft = _flags2.FieldType;
             object value = ft.IsEnum ? Enum.ToObject(ft, bits) : Convert.ChangeType(bits, ft);
             _flags2.SetValue(box, value);
+            seg = (NetSegment)box;
+
+            List<NetInfo.Segment> visible = new List<NetInfo.Segment>();
+            if (fence.m_segments != null)
+            {
+                for (int i = 0; i < fence.m_segments.Length; i++)
+                {
+                    NetInfo.Segment piece = fence.m_segments[i];
+                    if (piece == null || piece.m_segmentMesh == null || piece.m_segmentMaterial == null) continue;
+                    object[] args = { seg.m_flags, value, false };
+                    bool show;
+                    try
+                    {
+                        show = (bool)_checkFlags.Invoke(piece, args);
+                    }
+                    catch (Exception)
+                    {
+                        show = true;
+                    }
+                    if (show) visible.Add(piece);
+                }
+            }
 
             Part part = new Part();
-            part.Segment = box;
-            part.Args = new object[] { null, fence, data, 1f, NetManager.instance };
+            part.Segs = visible.ToArray();
+            part.Data = data;
+            part.Turn = rotated;
             part.Centre = position;
             part.Radius = (Q[3] - Q[0]).magnitude * 0.5f + hw + 30f;
             return part;
@@ -442,7 +483,15 @@ namespace QuayTools
         /// <summary>Called by the game's network rendering (patch on NetManager.EndRenderingImpl), before it flushes its LOD batches.</summary>
         internal void Render(RenderManager.CameraInfo cameraInfo)
         {
-            if (_failed || cameraInfo == null || _renderSegments == null) return;
+            if (_failed || cameraInfo == null) return;
+
+            NetManager nm = NetManager.instance;
+            MaterialPropertyBlock block = _materialBlock.GetValue(nm) as MaterialPropertyBlock;
+            if (block == null) return;
+            int idLeft = (int)_idLeft.GetValue(nm), idRight = (int)_idRight.GetValue(nm), idScale = (int)_idScale.GetValue(nm);
+            int idObject = (int)_idObject.GetValue(nm), idColor = (int)_idColor.GetValue(nm), idObjectColor = (int)_idObjectColor.GetValue(nm);
+            int idSurfA = (int)_idSurfA.GetValue(nm), idSurfB = (int)_idSurfB.GetValue(nm), idSurfMap = (int)_idSurfMap.GetValue(nm);
+            int idHeight = (int)_idHeight.GetValue(nm), idHeightMap = (int)_idHeightMap.GetValue(nm);
 
             Vector3 cam = cameraInfo.m_position;
             for (int i = 0; i < _ids.Count; i++)
@@ -455,8 +504,45 @@ namespace QuayTools
                     float reach = MaxDistance + part.Radius;
                     if ((part.Centre - cam).sqrMagnitude > reach * reach) continue;
 
-                    part.Args[0] = cameraInfo;
-                    _renderSegments.Invoke(part.Segment, part.Args);
+                    RenderManager.Instance data = part.Data;
+                    for (int k = 0; k < part.Segs.Length; k++)
+                    {
+                        NetInfo.Segment s = part.Segs[k];
+
+                        Vector4 objectIndex = data.m_dataVector3;
+                        if (s.m_requireWindSpeed) objectIndex.w = data.m_dataFloat0;
+                        Vector4 meshScale = data.m_dataVector0;
+                        if (part.Turn)
+                        {
+                            meshScale.x = -meshScale.x;
+                            meshScale.y = -meshScale.y;
+                        }
+
+                        block.Clear();
+                        block.SetMatrix(idLeft, data.m_dataMatrix0);
+                        block.SetMatrix(idRight, data.m_dataMatrix1);
+                        block.SetVector(idScale, meshScale);
+                        block.SetVector(idObject, objectIndex);
+                        block.SetColor(idColor, data.m_dataColor0);
+                        block.SetColor(idObjectColor, data.m_dataColor1);
+                        if (s.m_requireSurfaceMaps)
+                        {
+                            if (data.m_dataTexture0 != null && data.m_dataTexture1 != null)
+                            {
+                                block.SetTexture(idSurfA, data.m_dataTexture0);
+                                block.SetTexture(idSurfB, data.m_dataTexture1);
+                                block.SetVector(idSurfMap, data.m_dataVector1);
+                            }
+                        }
+                        else if (s.m_requireHeightMap && data.m_dataTexture0 != null)
+                        {
+                            block.SetTexture(idHeight, data.m_dataTexture0);
+                            block.SetVector(idHeightMap, data.m_dataVector1);
+                            block.SetVector(idSurfMap, data.m_dataVector2);
+                        }
+
+                        Graphics.DrawMesh(s.m_segmentMesh, data.m_position, data.m_rotation, s.m_segmentMaterial, s.m_layer, null, 0, block);
+                    }
                 }
             }
         }

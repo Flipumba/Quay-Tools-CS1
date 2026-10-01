@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.5.0**
+**Version: v0.5.1**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -202,6 +202,13 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.5.1
+- Fixed: network-model lines were invisible when another mod patches the game's segment rendering (for example Adaptive Roads): the models are now submitted directly (same shader inputs as the game), not through the patched routine.
+- Fixed: "Remove pedestrian path" did not stop pedestrians: the pathfinder check used wrong lane-type values.
+- Texture-path in strip mode now looks for a lit shader among all loaded shaders (shadows fall on it, lighting matches the surroundings); the candidates are listed in the log.
+- New option: size of the floating tool icons (1, 2, 3; default 2 = twice the former size).
+- Note: if you unpack over an older folder, delete the old `Patches` folder (the file `FencePatches.cs` no longer exists in v0.5.x).
 
 ### v0.5.0
 - **Network-line** (was *Add network model*) reworked like Props-line: any number of lines per segment, no more fixed "land" / "water" models. A new line appears in the middle of the quay, then it is moved (across, height), trimmed, scaled and chosen freely. Lines run from the middle of the start node to the middle of the end node; the start and the end can be trimmed back to the border of the node and beyond. Old saves are converted (land model = line 1, water model = line 2).

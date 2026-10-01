@@ -107,8 +107,8 @@ namespace QuayTools
     /// </summary>
     internal static class PedestrianPathPatch
     {
-        private const int PedestrianLane = 4;   // NetInfo.LaneType.Pedestrian
-        private const int VehicleLane = 2;      // NetInfo.LaneType.Vehicle
+        private const int PedestrianLane = 2;   // NetInfo.LaneType.Pedestrian (PathFind tests m_laneTypes & 2 for walking)
+        private const int VehicleLane = 1;      // NetInfo.LaneType.Vehicle
 
         private static Func<object, int> _laneTypes;
 

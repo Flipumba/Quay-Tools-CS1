@@ -953,6 +953,50 @@ namespace QuayTools
             }
         }
 
+        private static bool IsLitShaderName(string name)
+        {
+            string n = name.ToLowerInvariant();
+            return n.Contains("diffuse") || n.Contains("lambert") || n.Contains("bumped") || n.Contains("standard");
+        }
+
+        /// <summary>Searches the shaders loaded by the game for a lit, alpha-blended (or cut-out) one: Shader.Find only finds shaders that the game's build includes by name.</summary>
+        private static Shader FindLoadedLitShader()
+        {
+            Shader best = null;
+            int bestScore = 0;
+            System.Text.StringBuilder names = new System.Text.StringBuilder();
+            try
+            {
+                Object[] all = Resources.FindObjectsOfTypeAll(typeof(Shader));
+                for (int i = 0; i < all.Length; i++)
+                {
+                    Shader sh = all[i] as Shader;
+                    if (sh == null || !sh.isSupported) continue;
+                    string n = sh.name.ToLowerInvariant();
+                    if (n.StartsWith("hidden/") || n.Contains("ui/") || n.Contains("particle") || n.Contains("sprite") || n.Contains("skybox")) continue;
+
+                    int score = 0;
+                    if (n.Contains("transparent") && n.Contains("diffuse")) score = 4;
+                    else if (n.Contains("cutout") && n.Contains("diffuse")) score = 3;
+                    else if (n.Contains("transparent") && (n.Contains("bumped") || n.Contains("specular"))) score = 2;
+                    if (n.Contains("diffuse") || n.Contains("transparent") || n.Contains("cutout")) names.Append("\n  ").Append(sh.name);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = sh;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning("[QuayTools] Shader search failed: " + ex.Message);
+            }
+
+            Debug.Log("[QuayTools] Lit shader candidates among the loaded shaders:" + (names.Length > 0 ? names.ToString() : " none") +
+                (best != null ? "\n  -> using " + best.name : string.Empty));
+            return best;
+        }
+
         private Shader EnsureShader()
         {
             bool lit = Settings.DecalReceiveShadows;
@@ -980,6 +1024,15 @@ namespace QuayTools
                 for (int i = 0; i < names.Length && _shader == null; i++)
                 {
                     _shader = Shader.Find(names[i]);
+                    if (lit && _shader != null && !IsLitShaderName(_shader.name)) _shader = null; // an unlit one found by name is only a fallback
+                }
+
+                if (lit && _shader == null) _shader = FindLoadedLitShader();
+
+                if (_shader == null)
+                {
+                    string[] fallback = new[] { "Sprites/Default", "Hidden/Internal-Colored", "UI/Default", "Unlit/Color" };
+                    for (int i = 0; i < fallback.Length && _shader == null; i++) _shader = Shader.Find(fallback[i]);
                 }
 
                 if (_shader == null) Debug.LogError("[QuayTools] Decal paths: no usable shader found (tried Sprites/Default, Hidden/Internal-Colored, UI/Default, Unlit/Color, Legacy Shaders/Transparent/Diffuse)");
