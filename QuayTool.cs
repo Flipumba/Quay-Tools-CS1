@@ -17,12 +17,18 @@ namespace QuayTools
             Invert = 0,
             RemovePedestrian = 1,
             AddNetwork = 2,
-            Decal = 3
+            Decal = 3,
+            PropLine = 4,
+            Lock = 5
         }
+
+        public const int ModeCount = 6;
 
         private static readonly Color HoverColor = new Color(0.10f, 0.70f, 1.00f, 0.55f);
         private static readonly Color ChainColor = new Color(0.30f, 1.00f, 0.55f, 0.55f);
         private static readonly Color SelectedColor = new Color(1.00f, 0.75f, 0.10f, 0.60f);
+        private static readonly Color EditedColor = new Color(0.25f, 0.85f, 0.95f, 0.22f);
+        private static readonly Color LockedColor = new Color(1.00f, 0.30f, 0.30f, 0.55f);
         private static readonly Color LandColor = new Color(0.30f, 1.00f, 0.45f, 0.95f);
         internal static readonly Color StartColor = new Color(0.20f, 0.95f, 1.00f, 0.95f);
         internal static readonly Color EndColor = new Color(1.00f, 0.35f, 0.90f, 0.95f);
@@ -54,13 +60,13 @@ namespace QuayTools
         /// <summary>Modes that already do something. The rest are shown disabled in the panel.</summary>
         public static bool IsImplemented(Mode mode)
         {
-            return mode == Mode.Invert || mode == Mode.AddNetwork || mode == Mode.Decal;
+            return mode == Mode.Invert || mode == Mode.RemovePedestrian || mode == Mode.AddNetwork || mode == Mode.Decal || mode == Mode.PropLine || mode == Mode.Lock;
         }
 
         /// <summary>Modes in which segments are selected first and edited in the window.</summary>
         public static bool IsSelectMode(Mode mode)
         {
-            return mode == Mode.AddNetwork || mode == Mode.Decal;
+            return mode == Mode.AddNetwork || mode == Mode.Decal || mode == Mode.PropLine || mode == Mode.Lock || mode == Mode.RemovePedestrian;
         }
 
         public static string HintFor(Mode mode)
@@ -70,6 +76,9 @@ namespace QuayTools
                 case Mode.Invert: return Loc.T("hint_invert");
                 case Mode.AddNetwork: return Loc.T("hint_network");
                 case Mode.Decal: return Loc.T("hint_decal");
+                case Mode.PropLine: return Loc.T("hint_props");
+                case Mode.Lock: return Loc.T("hint_lock");
+                case Mode.RemovePedestrian: return Loc.T("hint_nopeds");
             }
             return Loc.T("hint_soon");
         }
@@ -88,7 +97,8 @@ namespace QuayTools
             _cacheSegment = 0;
             if (mode == Mode.AddNetwork) FenceCatalog.Refresh();
             if (mode == Mode.Decal) DecalCatalog.Refresh();
-            if (!IsSelectMode(mode)) ClearSelection(); // the selection is shared by the network and decal modes
+            if (mode == Mode.PropLine) PropCatalog.Refresh();
+            if (!IsSelectMode(mode)) ClearSelection(); // the selection is shared by all the modes that edit selected segments
         }
 
         protected override void OnEnable()
@@ -97,6 +107,7 @@ namespace QuayTools
             Instance = this;
             if (CurrentMode == Mode.AddNetwork) FenceCatalog.Refresh();
             if (CurrentMode == Mode.Decal) DecalCatalog.Refresh();
+            if (CurrentMode == Mode.PropLine) PropCatalog.Refresh();
             if (_ready) QuayToolPanel.ShowPanel();
         }
 
@@ -230,6 +241,9 @@ namespace QuayTools
 
                 case Mode.AddNetwork:
                 case Mode.Decal:
+                case Mode.PropLine:
+                case Mode.Lock:
+                case Mode.RemovePedestrian:
                     ToggleSelection();
                     break;
             }
@@ -294,6 +308,49 @@ namespace QuayTools
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
             FenceApplier.ClearModels(SelectionCopy(), Report);
+        }
+
+        // detaching, end shifts and width scale of fences
+
+        internal void EditFence(string property, Action<FenceSettings> apply)
+        {
+            if (_selected.Count == 0) return;
+            FenceApplier.EditFence(SelectionCopy(), property, apply);
+        }
+
+        // orientation lock
+
+        public void SetLock(bool locked)
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            if (CurrentMode == Mode.RemovePedestrian) FenceApplier.SetNoPeds(SelectionCopy(), locked, Report);
+            else FenceApplier.SetLock(SelectionCopy(), locked, Report);
+        }
+
+        // prop lines
+
+        internal void AddPropEntry(PropEntry template)
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            FenceApplier.AddPropEntry(SelectionCopy(), template, Report);
+        }
+
+        internal void EditPropEntry(int index, string property, Action<PropEntry> apply)
+        {
+            if (_selected.Count == 0) return;
+            FenceApplier.EditPropEntry(SelectionCopy(), index, property, apply);
+        }
+
+        public void RemovePropEntry(int index)
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            FenceApplier.RemovePropEntry(SelectionCopy(), index, Report);
+        }
+
+        public void ClearPropLines()
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            FenceApplier.ClearPropLines(SelectionCopy(), Report);
         }
 
         // decal paths
@@ -361,6 +418,26 @@ namespace QuayTools
         public override void RenderOverlay(RenderManager.CameraInfo cameraInfo)
         {
             base.RenderOverlay(cameraInfo);
+
+            if (Settings.MarkEdited)
+            {
+                // faint highlight of every segment edited by the mod
+                List<ushort> edited = EditedMarkers.Edited;
+                for (int i = 0; i < edited.Count; i++)
+                {
+                    if (!_selected.Contains(edited[i])) QuayGeometry.DrawModel(cameraInfo, edited[i], EditedColor);
+                }
+            }
+
+            if (CurrentMode == Mode.Lock || CurrentMode == Mode.RemovePedestrian)
+            {
+                // every locked / pedestrian-free segment is marked red
+                List<ushort> locked = CurrentMode == Mode.Lock ? LockStore.Snapshot() : PedStore.Snapshot();
+                for (int i = 0; i < locked.Count; i++)
+                {
+                    if (!_selected.Contains(locked[i])) QuayGeometry.DrawModel(cameraInfo, locked[i], LockedColor);
+                }
+            }
 
             if (IsSelectMode(CurrentMode))
             {

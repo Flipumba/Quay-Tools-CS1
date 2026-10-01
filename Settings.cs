@@ -20,6 +20,8 @@ namespace QuayTools
         private static readonly SavedBool UndoKeys;
         private static readonly SavedInt DecalModeValue;
         private static readonly SavedBool DecalShadows;
+        private static readonly SavedBool BridgeCentre;
+        private static readonly SavedBool MarkEditedValue;
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
         public static readonly SavedInputKey ActivationKey;
@@ -38,6 +40,8 @@ namespace QuayTools
             UndoKeys = new SavedBool("UndoHotkeys", FileName, true, true);
             DecalModeValue = new SavedInt("DecalMode", FileName, 0, true);
             DecalShadows = new SavedBool("DecalReceiveShadows", FileName, true, true);
+            BridgeCentre = new SavedBool("BridgeCentreLine", FileName, true, true);
+            MarkEditedValue = new SavedBool("MarkEdited", FileName, true, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
                 SavedInputKey.Encode(KeyCode.Q, true, true, false), true);
@@ -80,6 +84,18 @@ namespace QuayTools
         public static bool DecalPlaced
         {
             get { return DecalModeValue.value != 1; }
+        }
+
+        /// <summary>Decal paths across a sharp bend at a node follow the centre line between the two segment ends.</summary>
+        public static bool BridgeCentreLine
+        {
+            get { return BridgeCentre.value; }
+        }
+
+        /// <summary>While the tool is active, segments edited by the mod are highlighted and carry tool icons.</summary>
+        public static bool MarkEdited
+        {
+            get { return MarkEditedValue.value; }
         }
 
         public static bool QuickFlipEnabled
@@ -127,6 +143,16 @@ namespace QuayTools
             group.AddCheckbox("Decal strips receive shadows (lit shader; turn off for the unlit look if the colours look wrong)", DecalShadows.value, delegate (bool isChecked)
             {
                 DecalShadows.value = isChecked;
+            });
+
+            group.AddCheckbox("Decal paths: at sharp bends of nodes (Node Controller Renewal) bridge the gap along the centre line", BridgeCentre.value, delegate (bool isChecked)
+            {
+                BridgeCentre.value = isChecked;
+            });
+
+            group.AddCheckbox("While the tool is active, highlight edited segments and show tool icons above them", MarkEditedValue.value, delegate (bool isChecked)
+            {
+                MarkEditedValue.value = isChecked;
             });
 
             group.AddCheckbox("Allow tools on any network segment (not only quays)", AnyNetwork.value, delegate (bool isChecked)

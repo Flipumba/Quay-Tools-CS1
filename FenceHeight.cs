@@ -110,7 +110,16 @@ namespace QuayTools
                 P[i].y += dy;
             }
 
-            float hw = fenceInfo.m_halfWidth;
+            float startShift, endShift, scaleX;
+            if (!FenceStore.TryGetExtras(segmentId, geometricRight, out startShift, out endShift, out scaleX))
+            {
+                startShift = 0f;
+                endShift = 0f;
+                scaleX = 1f;
+            }
+            ShiftEnds(P, startShift, endShift);
+
+            float hw = fenceInfo.m_halfWidth * scaleX;
             Vector3[] tangent = { P[1] - P[0], P[2] - P[0], P[3] - P[1], P[3] - P[2] };
             Vector3[] A = new Vector3[4]; // left edge of the ribbon
             Vector3[] B = new Vector3[4]; // right edge of the ribbon
@@ -136,6 +145,123 @@ namespace QuayTools
                 line.d = P[3];
                 ApplyHeightMap(segmentId * 2 + (leftFence ? 1 : 0), line, hw + 6f, ref data);
             }
+        }
+
+        // ---------- shifting the ends of a fence along the quay ----------
+
+        /// <summary>Parameter of the point at arc length d on a curve sampled into dist (cumulative lengths, equal parameter steps).</summary>
+        private static float ParamAt(float[] dist, float d)
+        {
+            int n = dist.Length - 1;
+            if (d <= 0f) return 0f;
+            if (d >= dist[n]) return 1f;
+            int i = 0;
+            while (i < n - 1 && dist[i + 1] < d) i++;
+            float span = dist[i + 1] - dist[i];
+            float f = span > 1e-6f ? (d - dist[i]) / span : 0f;
+            return (i + f) / n;
+        }
+
+        private static void SplitCubic(Vector3[] P, float t, out Vector3[] left, out Vector3[] right)
+        {
+            Vector3 p01 = Vector3.Lerp(P[0], P[1], t), p12 = Vector3.Lerp(P[1], P[2], t), p23 = Vector3.Lerp(P[2], P[3], t);
+            Vector3 p012 = Vector3.Lerp(p01, p12, t), p123 = Vector3.Lerp(p12, p23, t);
+            Vector3 p = Vector3.Lerp(p012, p123, t);
+            left = new Vector3[] { P[0], p01, p012, p };
+            right = new Vector3[] { p, p123, p23, P[3] };
+        }
+
+        /// <summary>The part of the cubic between the parameters t0 and t1.</summary>
+        private static Vector3[] SubCubic(Vector3[] P, float t0, float t1)
+        {
+            Vector3[] a, b, c, d;
+            SplitCubic(P, t1, out a, out b); // a = [0, t1]
+            if (t0 <= 0.0001f) return a;
+            SplitCubic(a, t0 / t1, out c, out d); // d = [t0, t1]
+            return d;
+        }
+
+        private static Vector3 StartDirection(Vector3[] Q)
+        {
+            Vector3 d = Q[1] - Q[0];
+            if (d.sqrMagnitude < 1e-6f) d = Q[2] - Q[0];
+            if (d.sqrMagnitude < 1e-6f) d = Q[3] - Q[0];
+            return d.sqrMagnitude < 1e-8f ? Vector3.forward : d.normalized;
+        }
+
+        private static Vector3 EndDirection(Vector3[] Q)
+        {
+            Vector3 d = Q[3] - Q[2];
+            if (d.sqrMagnitude < 1e-6f) d = Q[3] - Q[1];
+            if (d.sqrMagnitude < 1e-6f) d = Q[3] - Q[0];
+            return d.sqrMagnitude < 1e-8f ? Vector3.forward : d.normalized;
+        }
+
+        /// <summary>
+        /// Moves the two ends of the fence curve P along the quay (metres, positive = beyond the end of the segment,
+        /// negative = trims the curve). Trimming cuts the real curve; extending continues it straight along the end
+        /// direction and fits a new curve through the new end points with the game's own control point formula.
+        /// </summary>
+        private static void ShiftEnds(Vector3[] P, float startShift, float endShift)
+        {
+            if (Mathf.Abs(startShift) < 0.01f && Mathf.Abs(endShift) < 0.01f) return;
+
+            const int N = 48;
+            Bezier3 bz = new Bezier3();
+            bz.a = P[0];
+            bz.b = P[1];
+            bz.c = P[2];
+            bz.d = P[3];
+            float[] dist = new float[N + 1];
+            Vector3 prev = P[0];
+            for (int i = 1; i <= N; i++)
+            {
+                Vector3 cur = bz.Position(i / (float)N);
+                dist[i] = dist[i - 1] + (cur - prev).magnitude;
+                prev = cur;
+            }
+            float len = dist[N];
+            if (len < 0.2f) return;
+
+            float d0 = Mathf.Max(0f, -startShift);
+            float d1 = len - Mathf.Max(0f, -endShift);
+            if (d1 - d0 < 0.2f)
+            {
+                float mid = Mathf.Clamp((d0 + d1) * 0.5f, 0.1f, len - 0.1f);
+                d0 = mid - 0.1f;
+                d1 = mid + 0.1f;
+            }
+
+            Vector3[] Q = { P[0], P[1], P[2], P[3] };
+            if (d0 > 0.001f || d1 < len - 0.001f)
+            {
+                float t0 = ParamAt(dist, d0), t1 = ParamAt(dist, d1);
+                if (t1 > t0 + 1e-4f) Q = SubCubic(Q, t0, t1);
+            }
+
+            float extS = Mathf.Max(0f, startShift), extE = Mathf.Max(0f, endShift);
+            if (extS > 0.01f || extE > 0.01f)
+            {
+                Vector3 dirA = StartDirection(Q), dirB = EndDirection(Q);
+                Vector3 pa = Q[0] - dirA * extS, pd = Q[3] + dirB * extE;
+                Vector3 m1, m2;
+                NetSegment.CalculateMiddlePoints(pa, dirA, pd, -dirB, false, false, out m1, out m2);
+                Q = new Vector3[] { pa, m1, m2, pd };
+            }
+
+            for (int i = 0; i < 4; i++) P[i] = Q[i];
+        }
+
+        /// <summary>
+        /// Makes a fence piece invisible: all control points collapse into a tiny spot far below the map.
+        /// </summary>
+        private static void Collapse(ref RenderManager.Instance data, Vector3 position)
+        {
+            Vector3 p = position + new Vector3(0f, -3000f, 0f);
+            Vector3 q = p + new Vector3(0.01f, 0f, 0f);
+            Vector3 r = p + new Vector3(0f, 0f, 0.01f);
+            data.m_dataMatrix0 = NetSegment.CalculateControlMatrix(p, p, q, q, r, r, q, q, position, 1f);
+            data.m_extraData.m_dataMatrix2 = NetSegment.CalculateControlMatrix(r, r, q, q, p, p, q, q, position, 1f);
         }
 
         private static void Corner(ushort segmentId, bool start, bool left, float offset, out Vector3 pos, out Vector3 dir, out bool smooth)
@@ -169,12 +295,22 @@ namespace QuayTools
             bool start1 = segs[seg1].m_startNode == nodeId;
             bool start2 = segs[seg2].m_startNode == nodeId;
 
+            // the fences of the two segments are not joined here: either one was detached or had its end shifted
+            bool right1 = start1 ? !left1 : left1, right2 = start2 ? !left2 : left2;
+            if (FenceStore.IsDetached(seg1, start1, right1) || FenceStore.IsDetached(seg2, start2, right2))
+            {
+                Collapse(ref data, node.m_position);
+                return;
+            }
+
             Vector3 p4, p6, p5, p7;
             bool s9, s11;
             Corner(seg1, start1, left1, i1.m_netAI.GetFencePosition(left1), out p4, out p6, out s9);
             Corner(seg2, start2, left2, i2.m_netAI.GetFencePosition(left2), out p5, out p7, out s11);
 
-            float hw = fenceInfo.m_halfWidth;
+            float sa, sb, scale1;
+            if (!FenceStore.TryGetExtras(seg1, right1, out sa, out sb, out scale1)) scale1 = 1f;
+            float hw = fenceInfo.m_halfWidth * scale1;
             Vector3 n12 = Vector3.Cross(p6, Vector3.up).normalized;
             Vector3 n14 = Vector3.Cross(p7, Vector3.up).normalized;
             Vector3 p16 = p4 - n12 * hw;

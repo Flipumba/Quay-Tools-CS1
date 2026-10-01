@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.3.6**
+**Version: v0.4.0**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -44,7 +44,11 @@ Adds fence/wall networks along the full length of quay segments.
    - **Vertical offset** — same range.
    - Double-click a slider to reset it. The drop-down lists scroll with the mouse wheel.
 5. Optional: **Close fence at segment start / end** — a straight fence across the quay, at right angles, at a dead end of the segment (the start is marked with a cyan ring, the end with a magenta ring). Each end is set separately, per segment.
-6. Close the tool when finished.
+6. **Extra: fence ends, scale, detach >>** opens a second column of the window:
+   - **Fence start / end along the quay** (per model, ±50 m): moves the two ends of the fence along the quay. Positive extends the fence beyond the end of the segment, negative trims it.
+   - **Width (thickness) scale** (per model, 10–500 %): scales the fence model across the quay. The height of a fence model cannot be scaled (the game's net shader takes it from the model).
+   - **Detach fences at segment start / end**: the fence is no longer joined to the neighbouring segment at that end, so the segment can be set up on its own (offsets, heights, shifts). One flag on either of the two segments is enough to detach the joint. Shifting a fence end detaches it automatically.
+7. Close the tool when finished.
 
 To remove models, select the segments and press **Remove models** under the settings.
 
@@ -75,12 +79,53 @@ Notes:
 - The mod option **Decal path rendering** switches to the alternative: one textured strip cropped by the mask, drawn unlit from a texture composed from the decal prop (colours from its diffuse map, opacity from its ACI map).
 - The log lines `[QuayTools] Decal catalog: N decal props` and `[QuayTools] Decal path built: ...` help to find problems.
 
+### Lock Segment
+
+Stops the game (or another mod) from flipping a quay segment on its own, for example while nodes are moved.
+
+1. Select the **Lock segment orientation** tool (padlock icon).
+2. Select quay segments (**Shift** selects the whole connected quay) and press **Lock selected segments**. Locked segments are drawn red while the tool is active.
+3. If a locked segment is flipped by something else, it is flipped back right after that simulation step (fences keep their land/water side). **Unlock selected segments** removes the lock.
+4. The Invert tool and Ctrl+R of Quay Tools still work on a locked segment; the lock keeps the new orientation.
+
+The lock is saved in the savegame (`QuayTools.Locks`). If another mod keeps flipping a segment back and forth, the lock is released and a line is written to the log.
+
+### Remove Pedestrian Path
+
+Makes citizens stop using a quay as a footpath.
+
+1. Select the **Remove pedestrian path** tool (crossed-out pedestrian icon), select quay segments (**Shift**: whole connected quay).
+2. Press **Remove pedestrian path on selected**. The segments are marked red; the pathfinder skips them, so pedestrians neither route over them nor see them as a path. **Restore pedestrian path on selected** undoes it.
+3. Citizens already walking along such a segment finish their current walk. Vehicle paths are blocked on these segments too, so use it only on pedestrian quays.
+
+Implemented with a Harmony patch on `PathFind.ProcessItem`; if a game update changes that method the feature is simply unavailable and a line is written to the log. Saved in the savegame (`QuayTools.NoPeds`).
+
+### Props-line
+
+Places props along quay segments at a fixed step (lamps, trees, benches, bollards, ...). Any non-decal prop you have can be used. The props are decoration only.
+
+1. Select the **Props-line** tool. Select quay segments (**Shift**: whole connected quay).
+2. Press **+ Add prop line**. A line is added to every selected segment; use **< >** to switch between the lines of the selection. The list is unlimited.
+3. Choose the prop in the drop-down list (type part of a name in the search field above it) and tune the line:
+   - **Step between props** (0.5–500 m).
+   - **Line start / end** (±50 m): positive extends the line beyond the end of the segment, negative trims it.
+   - **Shift forward / back across the quay** (+ toward the water) and **height** (±100 m).
+   - **Rotation of the props**, **Random rotation** (for trees), **Prop scale** (5–1000 %) and **Random size variation**.
+   - **Line enabled** switches a line off without removing it.
+4. **Remove this line** / **Remove all lines** delete lines from the selected segments.
+
+Changes apply to the same line number on all selected segments. The lines follow the curves and heights of the quay like decal paths do. Props-line data is saved in the savegame (`QuayTools.PropLines`). If a prop asset is missing when a save is loaded, that line is not drawn (a line in the log says so).
+
+### Edited segment markers
+
+While the Quay Tools tool is active, every quay segment edited by the mod is highlighted faintly and carries a row of small icons above it, one per applied tool: network models, decal path, props-line, orientation lock, removed pedestrian path. Icons are drawn for segments within about 800 m of the camera. Can be switched off in the mod options (**While the tool is active, highlight edited segments...**).
+
 ### Undo, Redo and Reset
 
-At the bottom of the window in the network-model and decal modes:
+At the bottom of the window in the network-model, decal, props-line and lock modes:
 
-- **Undo / Redo** (also **Ctrl+Z**, **Ctrl+Y** or **Ctrl+Shift+Z** while the tool is active): models, offsets, closing fences, decal paths and resets, up to 100 steps. Dragging a slider counts as one step. The history is kept until the map is left; it is not saved in the savegame.
-- **Reset**: sets offsets and closing fences (network-model mode) or width, shifts and colour (decal mode) of the selected segments back to their defaults. Models stay.
+- **Undo / Redo** (also **Ctrl+Z**, **Ctrl+Y** or **Ctrl+Shift+Z** while the tool is active): models, offsets, shifts, closing fences, decal paths, prop lines, locks and resets, up to 100 steps. Dragging a slider counts as one step. The history is kept until the map is left; it is not saved in the savegame.
+- **Reset**: sets offsets, end shifts, scale, detaching and closing fences (network-model mode) or width, shifts and colour (decal mode) of the selected segments back to their defaults. Models stay.
 - The Ctrl+Z / Ctrl+Y keys can be turned off in the mod options. The history is Quay Tools' own; it is not connected to other undo mods.
 
 #### How it works
@@ -88,11 +133,7 @@ At the bottom of the window in the network-model and decal modes:
 - The fence is written into the segment's left/right fence slot, as the vanilla fence tool does (vanilla refuses quays because they are not `RoadBaseAI`). The game saves the fence with the segment and removes it when the segment is deleted.
 - Horizontal/vertical offsets and the "do not join" option are applied with Harmony patches while the game builds fence geometry.
 - The width used for the highlight and the fence position is measured from the quay's visible model, not from the (much wider) network.
-- Per-segment offsets are saved in the savegame (key `QuayTools.Fences`) and decal paths under `QuayTools.Decals`. Loading a save without the mod simply ignores them.
-
-## Planned / Incomplete Features
-
-- **Remove pedestrian path** — the button is visible but disabled. Planned approach: swapping to existing quay variants without a pedestrian lane, plus a crossed-out pedestrian icon above the segment.
+- Per-segment offsets are saved in the savegame (key `QuayTools.Fences`) and decal paths under `QuayTools.Decals`, prop lines under `QuayTools.PropLines` and locks under `QuayTools.Locks`. Loading a save without the mod simply ignores them.
 
 ## Installation
 
@@ -156,8 +197,8 @@ All of them must stay together in the mod folder. Enable **Quay Tools** in **Con
 ### Optional
 
 - **UnifiedUI** — adds the tool button and hotkey to the UnifiedUI toolbar. Without it a small floating button is used. `Lib/UnifiedUILib.dll` is the UnifiedUI helper library (MIT license, © 2022 UnifiedUI), shipped next to the mod DLL so Quay Tools can talk to the UnifiedUI mod. UnifiedUI icons are 64×64 px, light glyphs on a transparent background.
-- **Node Controller Renewal (NCR)** — not needed, but supported: fences and decal paths follow nodes edited with it.
-- **Decal props** (Workshop or your own) — needed only to have something to choose in the *Add decal path* list; network fence models for *Add network model* likewise come from the game or from installed assets.
+- **Node Controller Renewal (NCR)** — not needed, but supported: fences, decal paths and prop lines follow nodes edited with it.
+- **Decal props** (Workshop or your own) — needed only to have something to choose in the *Add decal path* list; network fence models for *Add network model* and props for *Props-line* likewise come from the game or from installed assets.
 
 ### Build dependencies
 
@@ -175,6 +216,15 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.4.0
+- Edited segments are highlighted and marked with tool icons while the tool is active (mod option to switch it off).
+- New tool **Lock segment orientation**: locked segments are flipped back at once if the game or another mod flips them.
+- Fences: **detach** the fences of a segment from its neighbours at either end, **shift the start and end** of each fence along the quay (positive extends, negative trims) and **scale the width** of each fence model. Shifted ends detach automatically. The window gets a second column (**Extra** button) for these controls.
+- New tool **Props-line**: any number of prop lines per segment (prop, step, start/end shift, shift across the quay, height, rotation, random rotation, scale, random size, on/off), searchable prop list.
+- Decal paths at **sharp bends of nodes** (Node Controller Renewal): the path across the gap now follows one curve between the centres of the two segment ends instead of being blended from two crossing edge curves (angle above 30°). Can be switched off in the mod options (**Decal paths: at sharp bends ...**).
+- The tool buttons are now a compact row of icons (the window is shorter).
+- New tool **Remove pedestrian path**: selected segments are skipped by the pathfinder, so citizens do not walk on them or see them as a path.
 
 ### v0.3.6
 - Node Controller Renewal nodes, rewritten bridge: when a node joins two segments, ONE of the two paths (the neighbour's if it has a path and a smaller id, otherwise this one) continues across the gap. The gap is treated as a short segment: its left and right edge curves join the corners of the two ends (the corners come from the game's corner calculation, which NCR replaces, so shifted borders, border angles - the different lengths of the two edge curves - and heights are included), and the path is blended from them exactly like the path of a real segment. Tiles no longer jump sideways or leave wedges at the node, wide gaps follow the curve of the quay, and the height in the gap follows the slopes of the two ends.

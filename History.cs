@@ -11,6 +11,9 @@ namespace QuayTools
         public NetInfo Left, Right;
         public FenceSettings Fence;
         public DecalSettings Decal;
+        public PropLine Props;
+        public int Lock = -1; // see LockStore.Get
+        public bool NoPeds;
 
         public static SegSnap Capture(ushort id)
         {
@@ -23,6 +26,10 @@ namespace QuayTools
             if (FenceStore.TryGet(id, out f)) s.Fence = f.Clone();
             DecalSettings d;
             if (DecalStore.TryGet(id, out d)) s.Decal = d.Clone();
+            PropLine p;
+            if (PropLineStore.TryGet(id, out p)) s.Props = p.Clone();
+            s.Lock = LockStore.Get(id);
+            s.NoPeds = PedStore.Has(id);
             return s;
         }
 
@@ -34,6 +41,9 @@ namespace QuayTools
             if (Fence != null && !Fence.SameAs(o.Fence)) return false;
             if ((Decal == null) != (o.Decal == null)) return false;
             if (Decal != null && !Decal.SameAs(o.Decal)) return false;
+            if ((Props == null) != (o.Props == null)) return false;
+            if (Props != null && !Props.SameAs(o.Props)) return false;
+            if (Lock != o.Lock || NoPeds != o.NoPeds) return false;
             return true;
         }
 
@@ -47,6 +57,9 @@ namespace QuayTools
             FenceStore.Set(id, Fence == null ? null : Fence.Clone());
             if (Fence == null) FenceHeight.Release(id);
             DecalStore.Set(id, Decal == null ? null : Decal.Clone());
+            PropLineStore.Set(id, Props == null ? null : Props.Clone());
+            LockStore.SetRaw(id, Lock);
+            PedStore.SetBlocked(id, NoPeds);
 
             // the segment may have been inverted since the snapshot was taken: keep the fences on their land/water side
             FenceStore.Reconcile(id);

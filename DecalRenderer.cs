@@ -18,15 +18,16 @@ namespace QuayTools
     {
         private const float SolidLift = 0.05f;     // metres above the surface, against z-fighting (plain strip)
         private const float DecalLift = 0.05f;
-        private const float SampleStep = 1.0f;     // metres between cross sections
+        internal const float SampleStep = 1.0f;     // metres between cross sections
         private const int MaxVertices = 60000;     // a mesh holds at most 65535
         private const int MaxBuildsPerFrame = 12;
         private const int ChecksPerFrame = 6;
         private const float RetrySeconds = 3f;
+        private const float SharpBendDegrees = 30f; // turn angle at a node from which the bridge follows the centre line
         private const float BridgeBox = 20f;      // metres: projection box height of placed decals over a gap between segment ends
         private const int MaxTiles = 1500;         // placed decals per segment
 
-        private struct Corners
+        internal struct Corners
         {
             public Vector3 sL, sR, eL, eR, dSL, dSR, dEL, dER;
             public bool smSL, smSR, smEL, smER;
@@ -201,7 +202,7 @@ namespace QuayTools
 
         // ---------- geometry ----------
 
-        private static bool ReadCorners(ushort id, out Corners c)
+        internal static bool ReadCorners(ushort id, out Corners c)
         {
             c = new Corners();
             NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
@@ -214,14 +215,14 @@ namespace QuayTools
             return true;
         }
 
-        private static bool Finite(Vector3 v)
+        internal static bool Finite(Vector3 v)
         {
             return !(float.IsNaN(v.x) || float.IsNaN(v.y) || float.IsNaN(v.z) ||
                      float.IsInfinity(v.x) || float.IsInfinity(v.y) || float.IsInfinity(v.z));
         }
 
         /// <summary>Bezier control points of the path centre line from the four real corners of the segment.</summary>
-        private static bool CornerControlPoints(Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] P)
+        internal static bool CornerControlPoints(Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] P)
         {
             Vector3 mL1, mL2, mR1, mR2;
             NetSegment.CalculateMiddlePoints(c.sL, c.dSL, c.eL, c.dEL, c.smSL, c.smEL, out mL1, out mL2);
@@ -256,8 +257,24 @@ namespace QuayTools
             return true;
         }
 
+        /// <summary>Offsets a centre curve sideways (right of the travel direction positive for + toward a right-hand water) and up.</summary>
+        private static bool CentreControlPoints(Vector3[] c, DecalSettings s, float lift, bool waterRight, Vector3[] Q)
+        {
+            float lateral = s.Lateral * FenceStore.Unit * (waterRight ? 1f : -1f);
+            for (int i = 0; i < 4; i++)
+            {
+                Vector3 t = i < 3 ? c[i + 1] - c[i] : c[3] - c[2];
+                t.y = 0f;
+                Vector3 right = t.sqrMagnitude > 1e-6f ? Vector3.Cross(Vector3.up, t).normalized : Vector3.zero;
+                Q[i] = c[i] + right * lateral;
+                Q[i].y += lift;
+                if (!Finite(Q[i])) return false;
+            }
+            return true;
+        }
+
         /// <summary>Fallback when the corners are unusable: the centre line between the two nodes.</summary>
-        private static void NodeControlPoints(ushort id, DecalSettings s, float lift, bool waterRight, Vector3[] P)
+        internal static void NodeControlPoints(ushort id, DecalSettings s, float lift, bool waterRight, Vector3[] P)
         {
             NetManager nm = NetManager.instance;
             NetSegment seg = nm.m_segments.m_buffer[id];
@@ -356,6 +373,26 @@ namespace QuayTools
             {
                 aL = ownL; daL = dOwnL; aR = ownR; daR = dOwnR;
                 bL = nL; dbL = dnL; bR = nR; dbR = dnR;
+            }
+
+            // Sharp bend: the two edge curves of the gap cross or collapse (the inner corners of the two ends meet), so a
+            // path blended from them ends up off the quay. Follow one curve between the centres of the two ends instead.
+            if (Settings.BridgeCentreLine)
+            {
+                Vector3 dOwn = dOwnL + dOwnR, dNb = dnL + dnR;
+                dOwn.y = 0f;
+                dNb.y = 0f;
+                if (dOwn.sqrMagnitude > 1e-6f && dNb.sqrMagnitude > 1e-6f && Vector3.Angle(dOwn, -dNb) > SharpBendDegrees)
+                {
+                    Vector3 cA = (aL + aR) * 0.5f, cB = (bL + bR) * 0.5f;
+                    Vector3 dA = daL + daR, dB = dbL + dbR;
+                    if (dA.sqrMagnitude > 1e-6f && dB.sqrMagnitude > 1e-6f)
+                    {
+                        Vector3 m1, m2;
+                        NetSegment.CalculateMiddlePoints(cA, -dA.normalized, cB, -dB.normalized, false, false, out m1, out m2);
+                        return CentreControlPoints(new Vector3[] { cA, m1, m2, cB }, s, lift, waterRight, Q);
+                    }
+                }
             }
 
             // the corner directions point into their own segment; along the bridge they point the other way
@@ -594,7 +631,7 @@ namespace QuayTools
         // ---------- path sampling ----------
 
         /// <summary>Points along the path with the direction to the left and the distance from the start.</summary>
-        private class Path
+        internal class Path
         {
             public Vector3[] Pos;
             public Vector3[] Left;
@@ -634,7 +671,7 @@ namespace QuayTools
             return 3f * v * v * (P[1] - P[0]) + 6f * v * u * (P[2] - P[1]) + 3f * u * u * (P[3] - P[2]);
         }
 
-        private static Path SamplePath(Vector3[] P)
+        internal static Path SamplePath(Vector3[] P)
         {
             Bezier3 line = new Bezier3();
             line.a = P[0];

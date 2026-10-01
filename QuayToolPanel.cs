@@ -14,14 +14,22 @@ namespace QuayTools
     {
         private const float PanelWidth = 330f;
         private const float ButtonHeight = 40f;
-        private const float ContentTop = 304f;
+        private const float ContentTop = 172f;
         private const float RowHeight = 36f;
         private const int MaxPopupRows = 8;
 
         public static QuayToolPanel Instance { get; private set; }
 
-        private static readonly string[] TitleKeys = { "mode_invert", "mode_nopeds", "mode_network", "mode_decal" };
-        private static readonly string[] IconFiles = { "Invert.png", "NoPedestrian.png", "Network.png", "Decal.png" };
+        private static readonly string[] TitleKeys = { "mode_invert", "mode_nopeds", "mode_network", "mode_decal", "mode_props", "mode_lock" };
+        private static readonly string[] IconFiles = { "Invert.png", "NoPedestrian.png", "Network.png", "Decal.png", "Props.png", "Lock.png" };
+
+        /// <summary>A check box drawn as a button: "[x] text".</summary>
+        private class Toggle
+        {
+            public UIButton Button;
+            public bool Value;
+            public string TextKey;
+        }
 
         /// <summary>One row of a drop-down list (Tag: NetInfo for fence models, DecalEntry for decals).</summary>
         private class PickItem
@@ -45,10 +53,14 @@ namespace QuayTools
             public UILabel Name;
             public UISlider H, V;
             public UITextField HValue, VValue;
+            public UISlider S0, S1, Scale;       // fence end shifts and width scale (right column)
+            public UITextField S0V, S1V;
+            public UILabel ScaleV;
             public UIScrollablePanel Popup;
             public UIScrollbar Bar;
         }
 
+        private UIDragHandle _drag;
         private UIButton[] _modeButtons;
         private UILabel _hint;
         private UILabel _status;
@@ -64,6 +76,33 @@ namespace QuayTools
         private UIButton _removeButton;
         private bool _capStart, _capEnd;
         private PickerUi _openPopup;
+
+        // extra column of the network section (end shifts, width scale, detaching)
+        private UIPanel _adv;
+        private UIButton _advToggle;
+        private bool _advOpen;
+        private Toggle _detachStart, _detachEnd;
+
+        // orientation lock section
+        private UIPanel _lock;
+        private float _lockHeight;
+        private UILabel _lockSel, _lockState, _lockNote;
+        private UIButton _lockBtn, _unlockBtn;
+        private int _lockVersion = -1;
+
+        // prop line section
+        private UIPanel _prop, _propRight;
+        private float _propHeight;
+        private UILabel _propSel, _propNav, _propState;
+        private UIButton _propPrev, _propNext, _propAdd, _propRemove, _propClear;
+        private PickerUi _propUi;
+        private UITextField _propSearch;
+        private UISlider _pStep, _pStart, _pEnd, _pLateral, _pLift, _pAngle, _pScale, _pRand;
+        private UITextField _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV;
+        private UILabel _pAngleV, _pScaleV, _pRandV;
+        private Toggle _pRotate, _pEnabled;
+        private int _propIndex;
+        private int _propCount;
 
         // decal path section
         private UIPanel _decal;
@@ -250,6 +289,110 @@ namespace QuayTools
             return (sliderValue * FenceStore.Unit).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        private static UIButton MakeSmallButton(UIComponent parent, float x, float y, float w, string text, Action onClick)
+        {
+            UIButton b = parent.AddUIComponent<UIButton>();
+            b.size = new Vector2(w, 30f);
+            b.relativePosition = new Vector3(x, y);
+            StyleButton(b);
+            b.text = text;
+            b.textScale = 0.85f;
+            b.eventClicked += delegate (UIComponent c, UIMouseEventParameter p) { onClick(); };
+            return b;
+        }
+
+        private static void UpdateToggle(Toggle t)
+        {
+            t.Button.text = (t.Value ? "[x]  " : "[  ]  ") + Loc.T(t.TextKey);
+            t.Button.state = t.Value ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
+        }
+
+        private void SetToggle(Toggle t, bool value)
+        {
+            t.Value = value;
+            UpdateToggle(t);
+        }
+
+        /// <summary>A check box (button with "[x]"); onChange is not called while controls are being loaded.</summary>
+        private Toggle MakeToggle(UIComponent parent, float x, float y, float w, string textKey, Color32? color, Action<bool> onChange)
+        {
+            Toggle t = new Toggle();
+            t.TextKey = textKey;
+
+            UIButton b = parent.AddUIComponent<UIButton>();
+            b.width = w;
+            b.height = 30f;
+            b.relativePosition = new Vector3(x, y);
+            StyleButton(b);
+            b.textScale = 0.8f;
+            b.textHorizontalAlignment = UIHorizontalAlignment.Left;
+            b.textPadding = new RectOffset(10, 0, 0, 0);
+            if (color.HasValue)
+            {
+                Color32 c = color.Value;
+                b.textColor = c;
+                b.hoveredTextColor = c;
+                b.pressedTextColor = c;
+                b.focusedTextColor = c;
+            }
+            t.Button = b;
+            b.eventClicked += delegate (UIComponent comp, UIMouseEventParameter e)
+            {
+                if (_loading) return;
+                t.Value = !t.Value;
+                UpdateToggle(t);
+                onChange(t.Value);
+            };
+            UpdateToggle(t);
+            return t;
+        }
+
+        /// <summary>A label with the value on the right and a slider (whole numbers with a unit suffix such as " %"); returns the y of the next block.</summary>
+        private float MakeIntRow(UIComponent parent, float y, string labelKey, int min, int max, int reset, string suffix,
+                                 out UISlider slider, out UILabel value, Action<int> onValue)
+        {
+            MakeLabel(parent, Loc.T(labelKey), 12f, y, 0.72f);
+            UILabel vl = MakeLabel(parent, reset + suffix, PanelWidth - 76f, y + 1f, 0.72f);
+            vl.autoSize = false;
+            vl.width = 64f;
+            vl.textAlignment = UIHorizontalAlignment.Right;
+
+            UISlider sl = MakeSlider(parent, 12f, y + 20f, PanelWidth - 24f, min, max, reset);
+            sl.eventValueChanged += delegate (UIComponent c, float v)
+            {
+                int u = Mathf.RoundToInt(v);
+                vl.text = u + suffix;
+                onValue(u);
+            };
+
+            slider = sl;
+            value = vl;
+            return y + 44f;
+        }
+
+        private UITextField MakeTextBox(UIComponent parent, float x, float y, float w, string tooltip, Action<string> onChanged)
+        {
+            UITextField f = parent.AddUIComponent<UITextField>();
+            f.atlas = UIView.GetAView().defaultAtlas;
+            f.normalBgSprite = "TextFieldPanel";
+            f.hoveredBgSprite = "TextFieldPanelHovered";
+            f.focusedBgSprite = "TextFieldPanel";
+            f.selectionSprite = "EmptySprite";
+            f.builtinKeyNavigation = true;
+            f.isInteractive = true;
+            f.readOnly = false;
+            f.horizontalAlignment = UIHorizontalAlignment.Left;
+            f.verticalAlignment = UIVerticalAlignment.Middle;
+            f.textScale = 0.75f;
+            f.padding = new RectOffset(6, 4, 4, 0);
+            f.size = new Vector2(w, 22f);
+            f.relativePosition = new Vector3(x, y);
+            f.text = string.Empty;
+            f.tooltip = tooltip;
+            f.eventTextChanged += delegate (UIComponent c, string t) { onChanged(t); };
+            return f;
+        }
+
         // ---------- building ----------
 
         private void Build()
@@ -257,28 +400,25 @@ namespace QuayTools
             if (_built) return;
             _built = true;
 
-            UIDragHandle drag = AddUIComponent<UIDragHandle>();
-            drag.width = width;
-            drag.height = 34f;
-            drag.relativePosition = Vector3.zero;
-            drag.target = this;
+            _drag = AddUIComponent<UIDragHandle>();
+            _drag.width = width;
+            _drag.height = 34f;
+            _drag.relativePosition = Vector3.zero;
+            _drag.target = this;
 
             MakeLabel(this, "Quay Tools", 12f, 9f, 1.0f);
 
-            _modeButtons = new UIButton[4];
-            for (int i = 0; i < 4; i++)
+            int modeCount = QuayTool.ModeCount;
+            _modeButtons = new UIButton[modeCount];
+            float modeWidth = (PanelWidth - 20f - (modeCount - 1) * 4f) / modeCount;
+            for (int i = 0; i < modeCount; i++)
             {
                 QuayTool.Mode mode = (QuayTool.Mode)i;
                 UIButton button = AddUIComponent<UIButton>();
-                button.width = PanelWidth - 20f;
-                button.height = ButtonHeight;
-                button.relativePosition = new Vector3(10f, 38f + i * (ButtonHeight + 4f));
+                button.width = modeWidth;
+                button.height = 44f;
+                button.relativePosition = new Vector3(10f + i * (modeWidth + 4f), 38f);
                 StyleButton(button);
-                button.text = Loc.T(TitleKeys[i]);
-                button.textScale = 0.85f;
-                button.textHorizontalAlignment = UIHorizontalAlignment.Left;
-                button.textVerticalAlignment = UIVerticalAlignment.Middle;
-                button.textPadding = new RectOffset(48, 0, 0, 0);
                 button.isEnabled = QuayTool.IsImplemented(mode);
                 button.tooltip = button.isEnabled ? Loc.T(TitleKeys[i]) : Loc.T(TitleKeys[i]) + Loc.T("soon");
 
@@ -287,9 +427,13 @@ namespace QuayTools
                 {
                     UITextureSprite sprite = button.AddUIComponent<UITextureSprite>();
                     sprite.texture = icon;
-                    sprite.size = new Vector2(30f, 30f);
-                    sprite.relativePosition = new Vector3(8f, 5f);
+                    sprite.size = new Vector2(32f, 32f);
+                    sprite.relativePosition = new Vector3((modeWidth - 32f) * 0.5f, 6f);
                     sprite.isInteractive = false;
+                }
+                else
+                {
+                    button.text = (i + 1).ToString();
                 }
 
                 button.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
@@ -302,11 +446,11 @@ namespace QuayTools
                 _modeButtons[i] = button;
             }
 
-            _hint = MakeLabel(this, string.Empty, 12f, 216f, 0.7f);
+            _hint = MakeLabel(this, string.Empty, 12f, 88f, 0.7f);
             _hint.width = PanelWidth - 24f;
             _hint.wordWrap = true;
             _hint.autoSize = false;
-            _hint.height = 82f;
+            _hint.height = 78f;
 
             _status = MakeLabel(this, string.Empty, 12f, ContentTop, 0.8f);
             _status.textColor = new Color32(120, 220, 140, 255);
@@ -314,6 +458,8 @@ namespace QuayTools
 
             BuildAddNetworkSection();
             BuildDecalSection();
+            BuildLockSection();
+            BuildPropSection();
             BuildBar();
         }
 
@@ -362,6 +508,21 @@ namespace QuayTools
             UpdateCapText();
             y += 72f;
 
+            _advToggle = _add.AddUIComponent<UIButton>();
+            _advToggle.width = PanelWidth - 20f;
+            _advToggle.height = 30f;
+            _advToggle.relativePosition = new Vector3(10f, y);
+            StyleButton(_advToggle);
+            _advToggle.textScale = 0.8f;
+            _advToggle.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                ClosePopup();
+                _advOpen = !_advOpen;
+                Refresh();
+            };
+            UpdateAdvToggle();
+            y += 36f;
+
             _removeButton = _add.AddUIComponent<UIButton>();
             _removeButton.width = PanelWidth - 20f;
             _removeButton.height = 32f;
@@ -385,6 +546,66 @@ namespace QuayTools
             // popups are created last so that they are drawn above the controls below their button
             BuildPopup(_landUi);
             BuildPopup(_waterUi);
+
+            BuildAdvancedColumn();
+        }
+
+        private void UpdateAdvToggle()
+        {
+            _advToggle.text = Loc.T(_advOpen ? "adv_close" : "adv_open");
+            _advToggle.state = _advOpen ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
+        }
+
+        /// <summary>Right column of the network section: end shifts along the quay, width scale and detaching of the fences.</summary>
+        private void BuildAdvancedColumn()
+        {
+            _adv = AddUIComponent<UIPanel>();
+            _adv.width = PanelWidth;
+            _adv.relativePosition = new Vector3(PanelWidth, ContentTop);
+            _adv.isVisible = false;
+
+            float y = 0f;
+            MakeLabel(_adv, Loc.T("adv_title"), 12f, y, 0.85f);
+            y += 26f;
+
+            BuildAdvancedBlock(_landUi, true, ref y);
+            BuildAdvancedBlock(_waterUi, false, ref y);
+
+            _detachStart = MakeToggle(_adv, 10f, y, PanelWidth - 20f, "detachstart", (Color32)QuayTool.StartColor,
+                delegate (bool v) { OnFenceChange("detachstart", delegate (FenceSettings f) { f.DetachStart = v; }); });
+            y += 34f;
+            _detachEnd = MakeToggle(_adv, 10f, y, PanelWidth - 20f, "detachend", (Color32)QuayTool.EndColor,
+                delegate (bool v) { OnFenceChange("detachend", delegate (FenceSettings f) { f.DetachEnd = v; }); });
+            y += 34f;
+
+            UILabel note = MakeLabel(_adv, Loc.T("detach_note"), 12f, y, 0.68f);
+            note.width = PanelWidth - 24f;
+            note.wordWrap = true;
+            note.autoSize = false;
+            note.height = 52f;
+        }
+
+        private void BuildAdvancedBlock(PickerUi ui, bool land, ref float y)
+        {
+            UILabel title = MakeLabel(_adv, Loc.T(land ? "model1" : "model2"), 12f, y, 0.85f);
+            title.textColor = land ? new Color32(140, 255, 160, 255) : new Color32(140, 200, 255, 255);
+            y += 22f;
+
+            y = MakeValueRow(_adv, y, "fstart", -FenceStore.MaxShift, FenceStore.MaxShift, 0f, out ui.S0, out ui.S0V,
+                delegate (int u) { OnFenceChange(land ? "lstart" : "wstart", delegate (FenceSettings f) { if (land) f.LandStart = u; else f.WaterStart = u; }); });
+            y = MakeValueRow(_adv, y, "fend", -FenceStore.MaxShift, FenceStore.MaxShift, 0f, out ui.S1, out ui.S1V,
+                delegate (int u) { OnFenceChange(land ? "lend" : "wend", delegate (FenceSettings f) { if (land) f.LandEnd = u; else f.WaterEnd = u; }); });
+            y = MakeIntRow(_adv, y, "fscale", FenceStore.ScaleMin, FenceStore.ScaleMax, FenceStore.ScaleDefault, " %", out ui.Scale, out ui.ScaleV,
+                delegate (int u) { OnFenceChange(land ? "lscale" : "wscale", delegate (FenceSettings f) { if (land) f.LandScale = u; else f.WaterScale = u; }); });
+            y += 6f;
+        }
+
+        /// <summary>A control of the extra column changed: apply it to the selected segments (not while controls are loaded).</summary>
+        private void OnFenceChange(string key, Action<FenceSettings> apply)
+        {
+            if (_loading) return;
+            QuayTool tool = QuayTool.Instance;
+            if (tool != null) tool.EditFence(key, apply);
         }
 
         private PickerUi BuildBlock(bool land, ref float y)
@@ -723,10 +944,11 @@ namespace QuayTools
             if (!_built || _add == null) return;
 
             QuayTool current = QuayTool.Instance;
-            if (current != null && current.CurrentMode == QuayTool.Mode.Decal)
+            if (current != null)
             {
-                LoadDecalFromSelection();
-                return;
+                if (current.CurrentMode == QuayTool.Mode.Decal) { LoadDecalFromSelection(); return; }
+                if (current.CurrentMode == QuayTool.Mode.PropLine) { LoadPropFromSelection(); return; }
+                if (current.CurrentMode == QuayTool.Mode.Lock || current.CurrentMode == QuayTool.Mode.RemovePedestrian) { LoadLockFromSelection(); return; }
             }
 
             QuayTool tool = QuayTool.Instance;
@@ -770,6 +992,21 @@ namespace QuayTools
                 _capStart = s.CapStart;
                 _capEnd = s.CapEnd;
                 UpdateCapText();
+
+                _landUi.S0.value = s.LandStart;
+                _landUi.S1.value = s.LandEnd;
+                _waterUi.S0.value = s.WaterStart;
+                _waterUi.S1.value = s.WaterEnd;
+                _landUi.Scale.value = s.LandScale;
+                _waterUi.Scale.value = s.WaterScale;
+                _landUi.S0V.text = FormatOffset(s.LandStart);
+                _landUi.S1V.text = FormatOffset(s.LandEnd);
+                _waterUi.S0V.text = FormatOffset(s.WaterStart);
+                _waterUi.S1V.text = FormatOffset(s.WaterEnd);
+                _landUi.ScaleV.text = s.LandScale + " %";
+                _waterUi.ScaleV.text = s.WaterScale + " %";
+                SetToggle(_detachStart, s.DetachStart);
+                SetToggle(_detachEnd, s.DetachEnd);
             }
             finally
             {
@@ -786,6 +1023,14 @@ namespace QuayTools
                 blocks[i].H.isEnabled = enabled;
                 blocks[i].V.isEnabled = enabled;
             }
+            for (int i = 0; i < blocks.Length; i++)
+            {
+                blocks[i].S0.isEnabled = enabled;
+                blocks[i].S1.isEnabled = enabled;
+                blocks[i].Scale.isEnabled = enabled;
+            }
+            _detachStart.Button.isEnabled = enabled;
+            _detachEnd.Button.isEnabled = enabled;
             _capStartButton.isEnabled = enabled;
             _capEndButton.isEnabled = enabled;
             _removeButton.isEnabled = enabled;
@@ -793,6 +1038,27 @@ namespace QuayTools
         }
 
         // ---------- refresh / layout ----------
+
+        /// <summary>Two columns (network extras, prop lines) or one.</summary>
+        private void SetWide(bool wide)
+        {
+            float target = wide ? PanelWidth * 2f : PanelWidth;
+            if (Mathf.Approximately(width, target)) return;
+
+            if (wide)
+            {
+                Vector2 res = UIView.GetAView().GetScreenResolution();
+                Vector3 p = absolutePosition;
+                if (p.x + target > res.x - 10f)
+                {
+                    p.x = Mathf.Max(10f, res.x - target - 10f);
+                    absolutePosition = p;
+                }
+            }
+
+            width = target;
+            if (_drag != null) _drag.width = target;
+        }
 
         public void Refresh()
         {
@@ -807,15 +1073,24 @@ namespace QuayTools
                 _modeButtons[i].state = (int)current == i ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
             }
 
-            _hint.text = QuayTool.HintFor(current);
+            _hint.text = Loc.T(TitleKeys[(int)current]) + ": " + QuayTool.HintFor(current);
 
             bool addMode = current == QuayTool.Mode.AddNetwork;
             bool decalMode = current == QuayTool.Mode.Decal;
+            bool propMode = current == QuayTool.Mode.PropLine;
+            bool lockMode = current == QuayTool.Mode.Lock || current == QuayTool.Mode.RemovePedestrian;
+            bool select = addMode || decalMode || propMode || lockMode;
+
             _add.isVisible = addMode;
+            _adv.isVisible = addMode && _advOpen;
             _decal.isVisible = decalMode;
-            _bar.isVisible = addMode || decalMode;
+            _prop.isVisible = propMode;
+            _lock.isVisible = lockMode;
+            _bar.isVisible = select;
+            UpdateAdvToggle();
+            SetWide((addMode && _advOpen) || propMode);
             ClosePopup();
-            if (addMode || decalMode) LoadFromSelection();
+            if (select) LoadFromSelection();
             UpdateBar();
             UpdateHeight();
         }
@@ -826,9 +1101,11 @@ namespace QuayTools
 
             bool addMode = _add != null && _add.isVisible;
             bool decalMode = _decal != null && _decal.isVisible;
-            bool select = addMode || decalMode;
+            bool propMode = _prop != null && _prop.isVisible;
+            bool lockMode = _lock != null && _lock.isVisible;
+            bool select = addMode || decalMode || propMode || lockMode;
 
-            float section = addMode ? _addHeight : decalMode ? _decalHeight : 0f;
+            float section = addMode ? _addHeight : decalMode ? _decalHeight : propMode ? _propHeight : lockMode ? _lockHeight : 0f;
             float barY = ContentTop + section;
             float need = select ? barY + 42f + 24f : ContentTop + 30f;
 
@@ -1265,6 +1542,345 @@ namespace QuayTools
             if (_resetBtn != null) _resetBtn.isEnabled = enabled;
         }
 
+        // ---------- orientation lock section ----------
+
+        private void BuildLockSection()
+        {
+            _lock = AddUIComponent<UIPanel>();
+            _lock.width = PanelWidth;
+            _lock.relativePosition = new Vector3(0f, ContentTop);
+            _lock.isVisible = false;
+
+            float y = 0f;
+            _lockSel = MakeLabel(_lock, string.Empty, 12f, y, 0.85f);
+            y += 26f;
+
+            _lockState = MakeLabel(_lock, string.Empty, 12f, y, 0.75f);
+            y += 26f;
+
+            _lockBtn = _lock.AddUIComponent<UIButton>();
+            _lockBtn.width = PanelWidth - 20f;
+            _lockBtn.height = 32f;
+            _lockBtn.relativePosition = new Vector3(10f, y);
+            StyleButton(_lockBtn);
+            _lockBtn.text = Loc.T("lock_do");
+            _lockBtn.textScale = 0.85f;
+            _lockBtn.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null) tool.SetLock(true);
+            };
+            y += 38f;
+
+            _unlockBtn = _lock.AddUIComponent<UIButton>();
+            _unlockBtn.width = PanelWidth - 20f;
+            _unlockBtn.height = 32f;
+            _unlockBtn.relativePosition = new Vector3(10f, y);
+            StyleButton(_unlockBtn);
+            _unlockBtn.text = Loc.T("lock_undo");
+            _unlockBtn.textScale = 0.85f;
+            _unlockBtn.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null) tool.SetLock(false);
+            };
+            y += 38f;
+
+            UILabel note = MakeLabel(_lock, Loc.T("lock_note"), 12f, y, 0.68f);
+            note.width = PanelWidth - 24f;
+            note.wordWrap = true;
+            note.autoSize = false;
+            note.height = 64f;
+            _lockNote = note;
+            y += 68f;
+
+            _lockHeight = y;
+        }
+
+        private void LoadLockFromSelection()
+        {
+            if (_lock == null) return;
+
+            QuayTool tool = QuayTool.Instance;
+            int count = tool == null ? 0 : tool.Selection.Count;
+            bool peds = tool != null && tool.CurrentMode == QuayTool.Mode.RemovePedestrian;
+            int locked = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (peds ? PedStore.Has(tool.Selection[i]) : LockStore.IsLocked(tool.Selection[i])) locked++;
+            }
+
+            _lockBtn.text = Loc.T(peds ? "nop_do" : "lock_do");
+            _unlockBtn.text = Loc.T(peds ? "nop_undo" : "lock_undo");
+            _lockNote.text = Loc.T(peds ? "nop_note" : "lock_note");
+            _lockSel.text = Loc.T("selected") + count;
+            _lockState.text = Loc.F(peds ? "nop_state" : "lock_state", locked, count);
+            _lockBtn.isEnabled = count > 0 && locked < count;
+            _unlockBtn.isEnabled = locked > 0;
+            if (_resetBtn != null) _resetBtn.isEnabled = false;
+        }
+
+        // ---------- prop line section ----------
+
+        private void BuildPropSection()
+        {
+            _prop = AddUIComponent<UIPanel>();
+            _prop.width = PanelWidth * 2f;
+            _prop.relativePosition = new Vector3(0f, ContentTop);
+            _prop.isVisible = false;
+
+            _propRight = _prop.AddUIComponent<UIPanel>();
+            _propRight.width = PanelWidth;
+            _propRight.relativePosition = new Vector3(PanelWidth, 0f);
+
+            // ---- left column: lines, chooser, position
+            float y = 0f;
+            _propSel = MakeLabel(_prop, string.Empty, 12f, y, 0.85f);
+            y += 24f;
+
+            _propPrev = MakeSmallButton(_prop, 10f, y, 34f, "<", delegate { StepProp(-1); });
+            _propNav = MakeLabel(_prop, string.Empty, 54f, y + 8f, 0.8f);
+            _propNext = MakeSmallButton(_prop, PanelWidth - 44f, y, 34f, ">", delegate { StepProp(1); });
+            y += 36f;
+
+            _propAdd = _prop.AddUIComponent<UIButton>();
+            _propAdd.width = PanelWidth - 20f;
+            _propAdd.height = 32f;
+            _propAdd.relativePosition = new Vector3(10f, y);
+            StyleButton(_propAdd);
+            _propAdd.text = "+  " + Loc.T("prop_add");
+            _propAdd.textScale = 0.85f;
+            _propAdd.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool == null) return;
+                ClosePopup();
+                _propIndex = int.MaxValue; // show the new (last) line once it exists
+                tool.AddPropEntry(new PropEntry());
+            };
+            y += 38f;
+
+            MakeLabel(_prop, Loc.T("prop_choose"), 12f, y, 0.85f);
+            y += 20f;
+            _propSearch = MakeTextBox(_prop, 10f, y, PanelWidth - 20f, Loc.T("prop_search_tip"), OnPropSearch);
+            y += 26f;
+
+            _propUi = new PickerUi();
+            _propUi.Parent = _prop;
+            _propUi.EmptyText = Loc.T("prop_none");
+            _propUi.GetItems = delegate ()
+            {
+                List<PickItem> items = new List<PickItem>();
+                List<PropCatalogEntry> list = PropCatalog.Search(_propSearch == null ? string.Empty : _propSearch.text);
+                for (int i = 0; i < list.Count; i++)
+                {
+                    PickItem it = new PickItem();
+                    it.Title = list[i].Title;
+                    it.Atlas = list[i].Info.m_Atlas;
+                    it.Thumb = list[i].Info.m_Thumbnail;
+                    it.Tag = list[i];
+                    items.Add(it);
+                }
+                return items;
+            };
+            _propUi.OnPicked = OnPropPicked;
+            BuildHeader(_prop, _propUi, y);
+            y += 44f;
+
+            y = MakeValueRow(_prop, y, "pstep", PropEntry.StepMin, PropEntry.StepMax, PropEntry.StepDefault, out _pStep, out _pStepV,
+                delegate (int u) { OnPropValue("step", delegate (PropEntry e) { e.Step = u; }); });
+            y = MakeValueRow(_prop, y, "pstart", -PropEntry.MaxShift, PropEntry.MaxShift, 0f, out _pStart, out _pStartV,
+                delegate (int u) { OnPropValue("start", delegate (PropEntry e) { e.StartShift = u; }); });
+            y = MakeValueRow(_prop, y, "pend", -PropEntry.MaxShift, PropEntry.MaxShift, 0f, out _pEnd, out _pEndV,
+                delegate (int u) { OnPropValue("end", delegate (PropEntry e) { e.EndShift = u; }); });
+            float leftBottom = y;
+
+            // ---- right column: position across and up, rotation, size, switches
+            float y2 = 0f;
+            y2 = MakeValueRow(_propRight, y2, "plateral", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _pLateral, out _pLateralV,
+                delegate (int u) { OnPropValue("lateral", delegate (PropEntry e) { e.Lateral = u; }); });
+            y2 = MakeValueRow(_propRight, y2, "plift", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _pLift, out _pLiftV,
+                delegate (int u) { OnPropValue("lift", delegate (PropEntry e) { e.Lift = u; }); });
+            y2 = MakeIntRow(_propRight, y2, "pangle", 0, 359, 0, " °", out _pAngle, out _pAngleV,
+                delegate (int u) { OnPropValue("angle", delegate (PropEntry e) { e.Angle = u; }); });
+            _pRotate = MakeToggle(_propRight, 10f, y2, PanelWidth - 20f, "prandrot", null,
+                delegate (bool v) { OnPropValue("rotate", delegate (PropEntry e) { e.RandomRotation = v; }); });
+            y2 += 36f;
+            y2 = MakeIntRow(_propRight, y2, "pscale", PropEntry.ScaleMin, PropEntry.ScaleMax, PropEntry.ScaleDefault, " %", out _pScale, out _pScaleV,
+                delegate (int u) { OnPropValue("scale", delegate (PropEntry e) { e.Scale = u; }); });
+            y2 = MakeIntRow(_propRight, y2, "prandscale", 0, PropEntry.RandomMax, 0, " %", out _pRand, out _pRandV,
+                delegate (int u) { OnPropValue("rand", delegate (PropEntry e) { e.ScaleRandom = u; }); });
+            _pEnabled = MakeToggle(_propRight, 10f, y2, PanelWidth - 20f, "penabled", null,
+                delegate (bool v) { OnPropValue("enabled", delegate (PropEntry e) { e.Enabled = v; }); });
+            y2 += 38f;
+
+            _propRemove = _propRight.AddUIComponent<UIButton>();
+            _propRemove.width = PanelWidth - 20f;
+            _propRemove.height = 32f;
+            _propRemove.relativePosition = new Vector3(10f, y2);
+            StyleButton(_propRemove);
+            _propRemove.text = Loc.T("prop_remove");
+            _propRemove.textScale = 0.85f;
+            _propRemove.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null) tool.RemovePropEntry(_propIndex);
+            };
+            y2 += 38f;
+
+            _propClear = _propRight.AddUIComponent<UIButton>();
+            _propClear.width = PanelWidth - 20f;
+            _propClear.height = 32f;
+            _propClear.relativePosition = new Vector3(10f, y2);
+            StyleButton(_propClear);
+            _propClear.text = Loc.T("prop_clear");
+            _propClear.textScale = 0.85f;
+            _propClear.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool == null) return;
+                ClosePopup();
+                tool.ClearPropLines();
+            };
+            y2 += 38f;
+
+            _propState = MakeLabel(_propRight, string.Empty, 12f, y2, 0.75f);
+            y2 += 22f;
+
+            _propHeight = Mathf.Max(leftBottom, y2) + 4f;
+
+            // the list is created last so that it is drawn above the controls below its button
+            BuildPopup(_propUi);
+        }
+
+        private void OnPropValue(string key, Action<PropEntry> apply)
+        {
+            if (_loading) return;
+            QuayTool tool = QuayTool.Instance;
+            if (tool != null) tool.EditPropEntry(_propIndex, key, apply);
+        }
+
+        private void OnPropPicked(PickItem item)
+        {
+            string name = item == null ? null : ((PropCatalogEntry)item.Tag).Info.name;
+            QuayTool tool = QuayTool.Instance;
+            if (tool != null) tool.EditPropEntry(_propIndex, "prop", delegate (PropEntry e) { e.Prop = name; });
+        }
+
+        /// <summary>The search text changed: open the list (or refill it) with the matching props.</summary>
+        private void OnPropSearch(string text)
+        {
+            if (_loading || _propUi == null || _propUi.Popup == null) return;
+            if (_openPopup == _propUi) FillPopup(_propUi);
+            else TogglePopup(_propUi);
+        }
+
+        private void StepProp(int direction)
+        {
+            if (_propCount < 2) return;
+            _propIndex += direction;
+            if (_propIndex >= _propCount) _propIndex = 0;
+            if (_propIndex < 0) _propIndex = _propCount - 1;
+            ClosePopup();
+            LoadPropFromSelection();
+        }
+
+        private void ShowPropHeader(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                SetHeaderItem(_propUi, null);
+                return;
+            }
+
+            PropInfo info = PropCatalog.Find(name);
+            PickItem item = new PickItem();
+            if (info == null)
+            {
+                item.Title = name + Loc.T("missing");
+            }
+            else
+            {
+                item.Title = PropCatalog.TitleOf(info);
+                item.Atlas = info.m_Atlas;
+                item.Thumb = info.m_Thumbnail;
+            }
+            SetHeaderItem(_propUi, item);
+        }
+
+        /// <summary>Shows the current prop line of the first selected segment that has any.</summary>
+        private void LoadPropFromSelection()
+        {
+            if (_prop == null) return;
+
+            QuayTool tool = QuayTool.Instance;
+            int count = tool == null ? 0 : tool.Selection.Count;
+
+            _loading = true;
+            try
+            {
+                _propSel.text = Loc.T("selected") + count;
+
+                PropLine line = null;
+                int have = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    PropLine l;
+                    if (PropLineStore.TryGet(tool.Selection[i], out l) && l.Entries.Count > 0)
+                    {
+                        have++;
+                        if (line == null) line = l;
+                    }
+                }
+
+                _propCount = line == null ? 0 : line.Entries.Count;
+                _propIndex = _propCount == 0 ? 0 : Mathf.Clamp(_propIndex, 0, _propCount - 1);
+                PropEntry e = line != null ? line.Entries[_propIndex] : new PropEntry();
+
+                _propNav.text = _propCount == 0 ? Loc.T("prop_nolines") : Loc.F("prop_nav", _propIndex + 1, _propCount);
+
+                _pStep.value = e.Step;
+                _pStart.value = e.StartShift;
+                _pEnd.value = e.EndShift;
+                _pLateral.value = e.Lateral;
+                _pLift.value = e.Lift;
+                _pAngle.value = e.Angle;
+                _pScale.value = e.Scale;
+                _pRand.value = e.ScaleRandom;
+                _pStepV.text = FormatOffset(_pStep.value);
+                _pStartV.text = FormatOffset(_pStart.value);
+                _pEndV.text = FormatOffset(_pEnd.value);
+                _pLateralV.text = FormatOffset(_pLateral.value);
+                _pLiftV.text = FormatOffset(_pLift.value);
+                _pAngleV.text = e.Angle + " °";
+                _pScaleV.text = e.Scale + " %";
+                _pRandV.text = e.ScaleRandom + " %";
+                SetToggle(_pRotate, e.RandomRotation);
+                SetToggle(_pEnabled, e.Enabled);
+                ShowPropHeader(e.Prop);
+
+                bool any = count > 0, has = _propCount > 0;
+                _propAdd.isEnabled = any;
+                _propPrev.isEnabled = has && _propCount > 1;
+                _propNext.isEnabled = has && _propCount > 1;
+                _propRemove.isEnabled = has;
+                _propClear.isEnabled = has;
+                _propUi.Header.isEnabled = has;
+                _propSearch.isEnabled = has;
+                UISlider[] sliders = { _pStep, _pStart, _pEnd, _pLateral, _pLift, _pAngle, _pScale, _pRand };
+                for (int i = 0; i < sliders.Length; i++) sliders[i].isEnabled = has;
+                _pRotate.Button.isEnabled = has;
+                _pEnabled.Button.isEnabled = has;
+                if (_resetBtn != null) _resetBtn.isEnabled = false;
+
+                _propState.text = Loc.F("prop_state", have, count);
+            }
+            finally
+            {
+                _loading = false;
+            }
+        }
+
         // ---------- undo / redo / reset bar ----------
 
         private void BuildBar()
@@ -1326,6 +1942,13 @@ namespace QuayTools
                 UpdateBar();
             }
 
+            if (_lockVersion != LockStore.Version + PedStore.Version)
+            {
+                _lockVersion = LockStore.Version + PedStore.Version;
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null && (tool.CurrentMode == QuayTool.Mode.Lock || tool.CurrentMode == QuayTool.Mode.RemovePedestrian)) LoadLockFromSelection();
+            }
+
             if (_restoreVersion != History.RestoreVersion)
             {
                 _restoreVersion = History.RestoreVersion;
@@ -1339,7 +1962,11 @@ namespace QuayTools
             get
             {
                 if (!_built) return false;
-                UITextField[] fields = { _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dHex };
+                UITextField[] fields =
+                {
+                    _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dHex,
+                    _landUi.S0V, _landUi.S1V, _waterUi.S0V, _waterUi.S1V, _propSearch, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV
+                };
                 for (int i = 0; i < fields.Length; i++)
                 {
                     if (fields[i] != null && fields[i].hasFocus) return true;

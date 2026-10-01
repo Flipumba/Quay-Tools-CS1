@@ -110,7 +110,7 @@ namespace QuayTools
 
         private static bool IsDefault(FenceSettings s)
         {
-            return s.LandH == 0 && s.LandV == 0 && s.WaterH == 0 && s.WaterV == 0 && !s.CapStart && !s.CapEnd;
+            return s.IsDefault();
         }
 
         public static void SetOffset(List<ushort> segments, bool landSide, bool horizontal, int value)
@@ -128,6 +128,17 @@ namespace QuayTools
                 {
                     if (horizontal) s.WaterH = value; else s.WaterV = value;
                 }
+            }, null, null);
+        }
+
+        /// <summary>Changes any other fence setting (end shifts, width scale, detaching). Dragging is merged into one undo step.</summary>
+        public static void EditFence(List<ushort> segments, string property, Action<FenceSettings> apply)
+        {
+            Run(segments, "fence|" + property, delegate (ushort id)
+            {
+                FenceStore.Reconcile(id);
+                FenceSettings s = FenceStore.GetOrCreate(id);
+                apply(s);
             }, null, null);
         }
 
@@ -169,6 +180,73 @@ namespace QuayTools
                     FenceHeight.Release(id);
                 }
             }, "reset_done", report, true);
+        }
+
+        // ---------- orientation lock ----------
+
+        public static void SetLock(List<ushort> segments, bool locked, Action<string> report)
+        {
+            Run(segments, null, delegate (ushort id)
+            {
+                if (locked) LockStore.Lock(id);
+                else LockStore.Unlock(id);
+            }, locked ? "lock_done" : "unlock_done", report, true);
+        }
+
+        public static void SetNoPeds(List<ushort> segments, bool blocked, Action<string> report)
+        {
+            Run(segments, null, delegate (ushort id)
+            {
+                PedStore.SetBlocked(id, blocked);
+            }, blocked ? "nop_done" : "nop_undone", report, true);
+        }
+
+        // ---------- prop lines ----------
+
+        /// <summary>Appends a prop line (a copy of the template) to every listed segment.</summary>
+        public static void AddPropEntry(List<ushort> segments, PropEntry template, Action<string> report)
+        {
+            PropEntry t = template.Clone();
+            Run(segments, null, delegate (ushort id)
+            {
+                PropLine line;
+                PropLine copy = PropLineStore.TryGet(id, out line) ? line.Clone() : new PropLine();
+                copy.Entries.Add(t.Clone());
+                PropLineStore.Set(id, copy);
+            }, "prop_added", report, true);
+        }
+
+        /// <summary>Changes one property of the prop line with the given index on every listed segment that has it.</summary>
+        public static void EditPropEntry(List<ushort> segments, int index, string property, Action<PropEntry> apply)
+        {
+            Run(segments, "prop|" + index + "|" + property, delegate (ushort id)
+            {
+                PropLine line;
+                if (!PropLineStore.TryGet(id, out line) || index < 0 || index >= line.Entries.Count) return;
+                PropLine copy = line.Clone();
+                apply(copy.Entries[index]);
+                PropLineStore.Set(id, copy);
+            }, null, null);
+        }
+
+        public static void RemovePropEntry(List<ushort> segments, int index, Action<string> report)
+        {
+            Run(segments, null, delegate (ushort id)
+            {
+                PropLine line;
+                if (!PropLineStore.TryGet(id, out line) || index < 0 || index >= line.Entries.Count) return;
+                PropLine copy = line.Clone();
+                copy.Entries.RemoveAt(index);
+                PropLineStore.Set(id, copy);
+            }, "prop_removed", report, true);
+        }
+
+        public static void ClearPropLines(List<ushort> segments, Action<string> report)
+        {
+            Run(segments, null, delegate (ushort id)
+            {
+                PropLineStore.Remove(id);
+            }, "prop_cleared", report, true);
         }
 
         // ---------- decal paths ----------

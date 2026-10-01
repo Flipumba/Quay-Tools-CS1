@@ -11,6 +11,16 @@ namespace QuayTools
         public int LandH, LandV, WaterH, WaterV; // slider units, see FenceStore.Unit
         public bool CapStart, CapEnd; // straight closing fence at the start / end of the segment (dead ends)
 
+        // Shifts of the two fence ends along the quay (units of 0.1 m). Positive extends the fence beyond the end of
+        // the segment, negative trims it.
+        public int LandStart, LandEnd, WaterStart, WaterEnd;
+
+        // Width (thickness) scale of each fence model, percent.
+        public int LandScale = FenceStore.ScaleDefault, WaterScale = FenceStore.ScaleDefault;
+
+        // The fence is not joined to the neighbouring segment at this end of the segment.
+        public bool DetachStart, DetachEnd;
+
         /// <summary>The Invert flag of the segment the fence slots currently correspond to (see FenceStore.Reconcile).</summary>
         public bool Inverted;
 
@@ -24,12 +34,25 @@ namespace QuayTools
         {
             LandH = LandV = WaterH = WaterV = 0;
             CapStart = CapEnd = false;
+            LandStart = LandEnd = WaterStart = WaterEnd = 0;
+            LandScale = WaterScale = FenceStore.ScaleDefault;
+            DetachStart = DetachEnd = false;
+        }
+
+        /// <summary>True when nothing but the models themselves is set.</summary>
+        public bool IsDefault()
+        {
+            return LandH == 0 && LandV == 0 && WaterH == 0 && WaterV == 0 && !CapStart && !CapEnd &&
+                   LandStart == 0 && LandEnd == 0 && WaterStart == 0 && WaterEnd == 0 &&
+                   LandScale == FenceStore.ScaleDefault && WaterScale == FenceStore.ScaleDefault && !DetachStart && !DetachEnd;
         }
 
         public bool SameAs(FenceSettings o)
         {
             return o != null && LandH == o.LandH && LandV == o.LandV && WaterH == o.WaterH && WaterV == o.WaterV &&
-                   CapStart == o.CapStart && CapEnd == o.CapEnd && Inverted == o.Inverted;
+                   CapStart == o.CapStart && CapEnd == o.CapEnd && Inverted == o.Inverted &&
+                   LandStart == o.LandStart && LandEnd == o.LandEnd && WaterStart == o.WaterStart && WaterEnd == o.WaterEnd &&
+                   LandScale == o.LandScale && WaterScale == o.WaterScale && DetachStart == o.DetachStart && DetachEnd == o.DetachEnd;
         }
     }
 
@@ -42,7 +65,12 @@ namespace QuayTools
         /// <summary>Slider/field limit in units: 1000 units = 100 m.</summary>
         public const int MaxUnits = 1000;
 
-        private const int FormatVersion = 3;
+        /// <summary>Limit of the fence end shifts in units: 500 units = 50 m.</summary>
+        public const int MaxShift = 500;
+
+        public const int ScaleDefault = 100, ScaleMin = 10, ScaleMax = 500; // percent
+
+        private const int FormatVersion = 4;
         private static readonly Dictionary<ushort, FenceSettings> Map = new Dictionary<ushort, FenceSettings>();
 
         public static bool TryGet(ushort segment, out FenceSettings settings)
@@ -50,6 +78,14 @@ namespace QuayTools
             lock (Map)
             {
                 return Map.TryGetValue(segment, out settings);
+            }
+        }
+
+        public static List<ushort> Keys()
+        {
+            lock (Map)
+            {
+                return new List<ushort>(Map.Keys);
             }
         }
 
@@ -181,6 +217,59 @@ namespace QuayTools
             return true;
         }
 
+        /// <summary>Which of the two models (land or water) lies on the given geometric side of the segment.</summary>
+        private static bool IsLandSide(ushort segment, bool geometricRight, FenceSettings s, out bool ok)
+        {
+            ok = false;
+            NetInfo info = NetManager.instance.m_segments.m_buffer[segment].Info;
+            if (info == null) return false;
+            bool invert = (NetManager.instance.m_segments.m_buffer[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None;
+            QuayFrame f = QuayGeometry.GetFrame(info, invert);
+            ok = true;
+            return geometricRight == !f.WaterIsRight;
+        }
+
+        /// <summary>
+        /// Shifts of the two fence ends along the quay (metres, positive extends) and the width scale of the fence
+        /// on the given geometric side of the segment.
+        /// </summary>
+        public static bool TryGetExtras(ushort segment, bool geometricRight, out float startShift, out float endShift, out float scaleX)
+        {
+            startShift = 0f;
+            endShift = 0f;
+            scaleX = 1f;
+
+            FenceSettings s;
+            if (!TryGet(segment, out s)) return false;
+
+            bool ok;
+            bool isLand = IsLandSide(segment, geometricRight, s, out ok);
+            if (!ok) return false;
+
+            startShift = (isLand ? s.LandStart : s.WaterStart) * Unit;
+            endShift = (isLand ? s.LandEnd : s.WaterEnd) * Unit;
+            scaleX = Mathf.Clamp(isLand ? s.LandScale : s.WaterScale, ScaleMin, ScaleMax) / 100f;
+            return true;
+        }
+
+        /// <summary>
+        /// True when the fence of this segment on the given geometric side must not be joined to the neighbouring
+        /// segment at that end: it was detached explicitly, or the fence end was shifted (then it no longer meets the neighbour).
+        /// </summary>
+        public static bool IsDetached(ushort segment, bool atStart, bool geometricRight)
+        {
+            FenceSettings s;
+            if (!TryGet(segment, out s)) return false;
+            if (atStart ? s.DetachStart : s.DetachEnd) return true;
+
+            bool ok;
+            bool isLand = IsLandSide(segment, geometricRight, s, out ok);
+            if (!ok) return false;
+
+            int shift = atStart ? (isLand ? s.LandStart : s.WaterStart) : (isLand ? s.LandEnd : s.WaterEnd);
+            return shift != 0;
+        }
+
         /// <summary>Corner of a segment end as computed by the game and other mods (no fence offset).</summary>
         public static void GetRawCorner(ushort segment, bool start, bool left, out Vector3 pos, out Vector3 dir, out bool smooth)
         {
@@ -260,6 +349,14 @@ namespace QuayTools
                         w.Write(s.CapStart);
                         w.Write(s.CapEnd);
                         w.Write(s.Inverted);
+                        w.Write(s.LandStart);
+                        w.Write(s.LandEnd);
+                        w.Write(s.WaterStart);
+                        w.Write(s.WaterEnd);
+                        w.Write(s.LandScale);
+                        w.Write(s.WaterScale);
+                        w.Write(s.DetachStart);
+                        w.Write(s.DetachEnd);
                     }
                 }
                 w.Flush();
@@ -301,6 +398,18 @@ namespace QuayTools
                             // older saves did not record the orientation the fences belong to: assume the current one
                             if (version >= 3) s.Inverted = r.ReadBoolean();
                             else s.Inverted = IsInverted(id);
+
+                            if (version >= 4)
+                            {
+                                s.LandStart = r.ReadInt32();
+                                s.LandEnd = r.ReadInt32();
+                                s.WaterStart = r.ReadInt32();
+                                s.WaterEnd = r.ReadInt32();
+                                s.LandScale = r.ReadInt32();
+                                s.WaterScale = r.ReadInt32();
+                                s.DetachStart = r.ReadBoolean();
+                                s.DetachEnd = r.ReadBoolean();
+                            }
                             Map[id] = s;
                         }
                     }

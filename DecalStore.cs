@@ -93,6 +93,14 @@ namespace QuayTools
             }
         }
 
+        public static List<ushort> Keys()
+        {
+            lock (Map)
+            {
+                return new List<ushort>(Map.Keys);
+            }
+        }
+
         public static bool Has(ushort segment)
         {
             lock (Map)

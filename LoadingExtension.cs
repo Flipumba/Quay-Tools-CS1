@@ -35,6 +35,8 @@ namespace QuayTools
             _hotkeyHost = new GameObject("QuayToolsController");
             _hotkeyHost.AddComponent<QuayToolsController>();
             _hotkeyHost.AddComponent<DecalRenderer>();
+            _hotkeyHost.AddComponent<PropLineRenderer>();
+            _hotkeyHost.AddComponent<EditedMarkers>();
             Debug.Log("[QuayTools] Load finished");
         }
 
@@ -44,6 +46,9 @@ namespace QuayTools
             FenceHeight.Clear();
             History.Clear();
             DecalStore.Clear();
+            PropLineStore.Clear();
+            LockStore.Clear();
+            PedStore.Clear();
             FenceStore.Clear();
             Bootstrap.Shutdown();
             Debug.Log("[QuayTools] Shutdown finished");
