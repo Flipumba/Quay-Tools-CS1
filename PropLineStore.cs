@@ -24,6 +24,7 @@ namespace QuayTools
         public int StartShift, EndShift;     // units of 0.1 m, -MaxShift..0: how much the line is shortened at that end
         public int Lateral;                  // units of 0.1 m, + toward the water, - toward the land
         public int Lift;                     // units of 0.1 m, + up
+        public int ShiftX;                   // units of 0.1 m: the props slide along the line (the ends of the line stay)
         public int Angle;                    // degrees, turn of every prop around the vertical axis (0 = prop faces along the quay)
         public bool RandomRotation;
         public int Scale = ScaleDefault;     // percent
@@ -37,7 +38,7 @@ namespace QuayTools
         public bool SameAs(PropEntry o)
         {
             return o != null && Prop == o.Prop && Enabled == o.Enabled && Step == o.Step && StartShift == o.StartShift &&
-                   EndShift == o.EndShift && Lateral == o.Lateral && Lift == o.Lift && Angle == o.Angle &&
+                   EndShift == o.EndShift && ShiftX == o.ShiftX && Lateral == o.Lateral && Lift == o.Lift && Angle == o.Angle &&
                    RandomRotation == o.RandomRotation && Scale == o.Scale && ScaleRandom == o.ScaleRandom;
         }
     }
@@ -68,7 +69,7 @@ namespace QuayTools
     /// <summary>Thread-safe store of prop lines keyed by segment id, saved in the savegame.</summary>
     internal static class PropLineStore
     {
-        private const int FormatVersion = 1;
+        private const int FormatVersion = 2;
         private static readonly Dictionary<ushort, PropLine> Map = new Dictionary<ushort, PropLine>();
 
         /// <summary>Changes whenever the content changes; the renderer rebuilds what it shows.</summary>
@@ -173,6 +174,7 @@ namespace QuayTools
                             w.Write(e.RandomRotation);
                             w.Write(e.Scale);
                             w.Write(e.ScaleRandom);
+                            w.Write(e.ShiftX);
                         }
                     }
                 }
@@ -192,7 +194,7 @@ namespace QuayTools
                 using (BinaryReader r = new BinaryReader(ms))
                 {
                     int version = r.ReadInt32();
-                    if (version != FormatVersion) return;
+                    if (version < 1 || version > FormatVersion) return;
 
                     int count = r.ReadInt32();
                     lock (Map)
@@ -218,6 +220,7 @@ namespace QuayTools
                                 e.RandomRotation = r.ReadBoolean();
                                 e.Scale = r.ReadInt32();
                                 e.ScaleRandom = r.ReadInt32();
+                                if (version >= 2) e.ShiftX = Mathf.Clamp(r.ReadInt32(), -PropEntry.MaxOffset, PropEntry.MaxOffset);
                                 e.Step = Mathf.Clamp(e.Step, PropEntry.StepMin, PropEntry.StepMax);
                                 e.StartShift = Mathf.Clamp(e.StartShift, -PropEntry.MaxShift, 0);
                                 e.EndShift = Mathf.Clamp(e.EndShift, -PropEntry.MaxShift, 0);

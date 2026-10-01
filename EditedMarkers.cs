@@ -14,9 +14,9 @@ namespace QuayTools
         private const int MaxHighlighted = 400;
 
         // bit -> icon file
-        private static readonly int[] Bits = { 1, 2, 4, 8, 16 };
-        private static readonly string[] Files = { "Network.png", "Decal.png", "Props.png", "Lock.png", "NoPedestrian.png" };
-        private static readonly string[] TipKeys = { "mode_network", "mode_decal", "mode_props", "mode_lock", "mode_nopeds" };
+        private static readonly int[] Bits = { 1, 2, 4, 8, 16, 32 };
+        private static readonly string[] Files = { "Network.png", "Decal.png", "Props.png", "Lock.png", "NoPedestrian.png", "HideProps.png" };
+        private static readonly string[] TipKeys = { "mode_network", "mode_decal", "mode_props", "mode_lock", "mode_nopeds", "mode_hideprops" };
 
         private static readonly List<ushort> EditedList = new List<ushort>();
 
@@ -27,7 +27,7 @@ namespace QuayTools
         }
 
         private readonly Dictionary<ushort, int> _marks = new Dictionary<ushort, int>();
-        private readonly Texture2D[] _icons = new Texture2D[5];
+        private readonly Texture2D[] _icons = new Texture2D[6];
         private bool _iconsLoaded;
         private float _next;
         private GUIStyle _box;
@@ -69,6 +69,8 @@ namespace QuayTools
             for (int i = 0; i < keys.Count; i++) Add(keys[i], 8);
             keys = PedStore.Snapshot();
             for (int i = 0; i < keys.Count; i++) Add(keys[i], 16);
+            keys = HideStore.Snapshot();
+            for (int i = 0; i < keys.Count; i++) Add(keys[i], 32);
 
             NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
             EditedList.Clear();

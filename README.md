@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.5.4**
+**Version: v0.5.5**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -46,20 +46,30 @@ Makes citizens stop using a quay as a footpath.
 
 1. Select the **Remove pedestrian path** tool (crossed-out pedestrian icon), select quay segments (**Shift**: whole connected quay).
 2. Press **Remove pedestrian path on selected**. The segments are marked red; the pathfinder skips them, so pedestrians neither route over them nor see them as a path. **Restore pedestrian path on selected** undoes it.
-3. Citizens already walking along such a segment finish their current walk; new walking paths avoid it. Only walking paths are blocked (pedestrian lanes without vehicle lanes), vehicles still drive on the segment.
+3. Citizens whose route already crosses such a segment get a new route (also when a save is loaded); new paths avoid it. Every path that may use pedestrian lanes (walking, with public transport, or "any means") skips the segment; vehicle-only paths are not affected.
 
-Implemented with Harmony patches on the `PathFind.ProcessItem*` methods that receive a segment id; they are found by reflection and listed in the log (`Pedestrian block: patched N PathFind method(s)`). If a game update changes them the feature is simply unavailable. Saved in the savegame (`QuayTools.NoPeds`).
+Implemented with Harmony patches on the `ProcessItem*` methods of `PathFind` and of path-finder classes derived from it (TM:PE's `CustomPathFind`) that receive a segment id; they are found by reflection and listed in the log (`Pedestrian block: patched N new method(s)`). If a game update changes them the feature is simply unavailable. Saved in the savegame (`QuayTools.NoPeds`).
+
+### Hide Default Props
+
+Hides the props that come with the network model of a quay (street lights, trees, benches along its lanes).
+
+1. Select the **Hide default props** tool (crossed-out trees icon), select quay segments (**Shift**: whole connected quay).
+2. Press **Hide default props on selected**. The segments are marked red; **Show default props on selected** undoes it.
+3. Only the props of the network model itself are hidden, and only on the selected segments (other segments of the same quay type keep them). Props placed with **Props-line** are separate and stay.
+
+Implemented with Harmony patches on `NetLane.RenderInstance` / `PopulateGroupData` (found by reflection, listed in the log as `Hide props: patched N NetLane method(s)`). Saved in the savegame (`QuayTools.HideProps`).
 
 ### Network-line
 
 Draws network models (fences, walls, ...) along quay segments. Any number of lines per segment, like Props-line.
 
 1. Select the **Network-line** tool. Select quay segments (orange; **Shift**: whole connected quay; **right click** clears the selection).
-2. Press **+ Add network-model line**. A line is added to every selected segment, **in the middle of the quay**; use **< >** to switch between the lines of the selection (the line being edited is drawn as a blue stripe).
-3. Choose the **network model** in the drop-down list (preview and name, search field, scrolling, **star** = favourite: favourites are listed first and are kept in the mod settings for all savegames) and tune the line:
-   - **Forward / back across the quay** (+ toward the water, ±50 m) and **height** (±50 m): slider, or type a value in the field next to it. Double-click a slider to reset it.
-   - **Line start / end trim** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve). Trimming moves the start or the end of the line back toward the segment, up to the border of the node and further, without joining it to the neighbouring segment.
-   - **Width (thickness) scale** (10–500 %). The height of a model cannot be scaled (the game's net shader takes it from the model).
+2. Press **+ Add network model**. A line is added to every selected segment, **in the middle of the quay**; use **< >** to switch between the lines of the selection (the line being edited is drawn as a blue stripe).
+3. The window has two columns. Left column: the selection and line switch, **Add network model**, the **Network model** drop-down list (preview and name, search field, scrolling, **star** = favourite: favourites are listed first and are kept in the mod settings for all savegames), **Turn the model around**, **Close line at segment start / end**, **Remove this line** / **Remove all lines**, then **Undo / Redo / Reset**. Right column (the values; slider, or type a value in the field next to it, double-click a slider to reset it):
+   - **Line start offset** / **Line end offset** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve). The offset moves the start or the end of the line back toward the segment, up to the border of the node and further, without joining it to the neighbouring segment.
+   - **Offset Y** (+ toward the water, ±50 m) and **Offset Z** (±50 m).
+   - **Model width** (10–500 %). The height of a model cannot be scaled (the game's net shader takes it from the model).
    - **Turn the model around**: the model faces the water by default; with this switch it faces the land. This is a real half turn (the front becomes the back), not a mirror image.
    - **Close line at segment start / end**: a straight piece of the same model across the quay, facing away from the segment (start = cyan ring, end = magenta ring).
 4. **Remove this line** / **Remove all lines** delete lines from the selected segments.
@@ -74,11 +84,11 @@ Places props along quay segments at a fixed step (lamps, trees, benches, bollard
 
 1. Select the **Props-line** tool. Select quay segments (**Shift**: whole connected quay).
 2. Press **+ Add prop line**. A line is added to every selected segment; use **< >** to switch between the lines of the selection.
-3. Choose the prop or **tree** (trees are marked `[tree]`) in the drop-down list (search field and favourites inside the list) and tune the line:
-   - **Step between props** (0.5–50 m).
-   - **Line start / end trim** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve), so props also stand on the nodes. The props are counted from the start of the line; trimming one end only removes props and never moves the others.
-   - **Shift forward / back across the quay** (+ toward the water) and **height** (±50 m).
-   - **Rotation of the props**, **Random rotation** (for trees), **Prop scale** (5–1000 %) and **Random size variation**.
+3. Left column: **Prop** drop-down list (trees are marked `[tree]`; search field and favourites inside the list), **Remove this line** / **Remove all lines**, **Undo / Redo / Reset**. Right column (values), in this order:
+   - **Prop step** (0.5–50 m), **Prop scale** (5–1000 %), **Random scale**.
+   - **Prop rotation** and **Random rotation** (both hidden for trees: a tree has no direction).
+   - **Offset X** (along the line), **Offset Y** (+ toward the water) and **Offset Z** (±50 m).
+   - **Line start** / **Line end** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve), so props also stand on the nodes. The props are counted from the start of the line; trimming one end only removes props and never moves the others.
 4. **Remove this line** / **Remove all lines** delete lines from the selected segments.
 
 Changes apply to the same line number on all selected segments. The lines follow the curves and heights of the quay like decal paths do. Where only one of two neighbouring segments has a line, only its half of the node is covered. Trees are drawn through the game's tree renderer (no rotation). Props-line data is saved in the savegame (`QuayTools.PropLines`). If a prop asset is missing when a save is loaded, that line is not drawn (a line in the log says so).
@@ -88,20 +98,23 @@ Changes apply to the same line number on all selected segments. The lines follow
 Lays a ground decal (any decal prop you have: Workshop decals, cobblestones, markings, ...) or a plain coloured strip along the top surface of a quay. Any number of paths per segment.
 
 1. Select the **Texture-path** tool and select quay segments (**Shift**: whole connected quay).
-2. Press **+ Add texture path**: a path appears in the middle of the quay; use **< >** to switch between the paths of the selection.
-3. Choose a **decal** in the drop-down list (the first entry, *Plain colour*, draws a simple coloured strip).
-4. The path is a **mask**: set its **width** (0.1–50 m), a **sideways shift** (+ toward the water) and a **height offset** (±50 m).
-5. **Decal scale** is the width of one tile of the decal texture (choosing a decal sets its natural size); **Decal step** and **box height** control the placed tiles.
-6. Set the **tint** with the R, G, B and A sliders or type a hex value (`#RRGGBB` or `#RRGGBBAA`).
-7. **Alternative rendering** (per path): instead of placing game decals step by step, the path is drawn as one textured strip cropped by the mask, drawn unlit from a texture composed from the decal prop (colours from its diffuse map, opacity from its ACI map). Switch it in the settings of each path.
-8. **Remove this path** / **Remove all paths** delete paths from the selected segments.
+2. Press **Add decal** or **Add plane** (side by side): a path appears in the middle of the quay; use **< >** to switch between the paths of the selection. The way of drawing is chosen when the path is added and stays with it (the button of the current path stays pressed):
+   - **Decal**: game decals placed step by step along the path (like the game places decal props), with a projection box.
+   - **Plane**: one textured strip cropped by the path edges, instead of placed decals. It lies lower than the quay surface by default (**Offset Z** 1 m), receives shadows when its tint is fully opaque, and is drawn unlit when the tint is translucent. The projection size is not shown for a plane.
+3. Left column: **Texture** drop-down list (the first entry, *Colour (no texture)*, uses the game's **theme pavement** texture, the one of pedestrian paths, tinted by the path colour), **Remove this path** / **Remove all paths**, **Undo / Redo / Reset**.
+4. Right column (values), in this order: **Path width** (0.1–50 m), **Texture scale** (width of one tile; choosing a decal sets its natural size, *Colour* sets the size of the theme pavement texture), **Texture step**, **Projection size** (decal only), **Offset X** (along the line; props, textures and tiles slide, the ends stay), **Offset Y** (+ toward the water), **Offset Z** (±50 m), **Line start** / **Line end** (0 to −50 m: the path is shortened at that end, like the lines of the other tools) and the **tint** (R, G, B, A sliders or a hex value `#RRGGBB` / `#RRGGBBAA`).
+5. A plane draws the composed texture of the decal prop (colours from its diffuse map, opacity from its ACI map).
 
-Changes apply to the same path number on all selected segments. The path is built from the two edge curves of the segment, so it follows the curves and heights of the quay, also after node edits made with Node Controller Renewal. Saves of v0.4.x keep their path (the old global rendering option becomes the setting of each path).
+Changes apply to the same path number on all selected segments. The path is built from the two edge curves of the segment, so it follows the curves and heights of the quay, also after node edits made with Node Controller Renewal. Saves of v0.4.x keep their path (the old global rendering option becomes the way of drawing of each path).
 
 Notes:
 
-- By default the decal is **placed like the game places decal props**: tiles of the decal prop are laid step by step along the path. This mode has no mask cropping. Decals that need the terrain height map are not offered.
+- A decal path **places decals like the game places decal props**: tiles of the decal prop are laid step by step along the path. This mode has no mask cropping. Decals that need the terrain height map are not offered.
 - A decal is stored by the name of its prop. If the asset is missing when a save is loaded, that path is not drawn (a line in the log says so).
+
+### Window
+
+The window has three columns: the tools, the controls of the tool (with the undo / redo / reset bar, the **Hide highlight while dragging** switch and the description of the tool) and the sliders. A tool without values shows its description on top. With the switch on, the highlight of the quay borders and lines is hidden only while a slider is dragged.
 
 ### Edited segment markers
 
@@ -202,6 +215,20 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.5.5
+- Line across a node (Network-line, Props-line, Texture-path), rebuilt after reading the source of Node Controller Renewal and the game's node rendering: NCR changes the corner position and direction of every segment end (corner offset, shift, stretch, embankment, slope, twist, sharp corners, per-corner position / direction) inside `NetSegment.CalculateCorner`, and the game draws the surface of a bend node from those corners: its two edge curves join each corner of one segment with the corner of the other segment that is on the same side (matched by the side going away from the node, not by distance) with smooth ends. The line over a node is now exactly that surface at the line's position (so it follows the real shape and height of the node), it starts and ends at the end points of the two segment lines, and it leaves each of them in the direction of that segment's line (a small correction only, so there is no kink). The centre-line shortcut is used only for turns above 110 degrees.
+- New value **Offset X** for Props-line and Texture-path: moves the props / texture / tiles along the line without moving the ends of the line.
+- The offsets are renamed and ordered the same in all tools: **Offset X**, **Offset Y** (was Horizontal offset), **Offset Z** (was Vertical offset).
+- Window: one fixed size for all tools (the description block is sized for the longest text), content starts lower below the title, more space between the buttons, delete / undo / redo / reset on a lighter box of their own, delete buttons are dark red, the model / texture / prop chooser is twice as high with a framed picture, and **Hide highlight interface** is shown only in tools with sliders, at the bottom of the third column.
+- Fixed kinks and breaks at the joints between a segment and a node (see the next item for how the curve over the node is built).
+- Network-model lines are built again the way they were before v0.5.0: one curve from the start to the end of the segment (the blend of the real edge curves, taken from the game and from mods that change the corners). Only the gaps at nodes are separate pieces, one per gap. The texture coordinates are set by the mod without rounding and continue from piece to piece. The earlier cut into short pieces is gone (it made steps).
+- Texture-path: new **Line start** / **Line end** values (shorten the path at either end, like the other tools).
+- Texture-path: the **Alternative rendering** switch is replaced by two buttons, **Add decal** and **Add plane**; the way of drawing is chosen when a path is added.
+- Texture-path: *Colour (no texture)* uses the game's theme pavement texture as its base. A decal path without a texture places a stand-in decal (a game decal prop with the pavement texture), a plane draws a strip.
+- New window layout in three columns: the tools (vertical, on a panel of their own), the controls of the tool with the undo / redo / reset bar, the highlight switch and the description (on a panel of its own, on top for a tool without values and at the bottom otherwise), and the sliders. Texture-path, Network-line and Props-line use a common order of values. Explanations in brackets were removed from the labels.
+- New switch **Hide highlight while dragging** in every tool: the highlight of the quay borders and lines is hidden while a slider is dragged and shown at all other times.
+- New tool **Hide default props** (between "Remove pedestrian path" and "Network-line"): hides the props of the quay's network model on selected segments; your Props-line props stay.
 
 ### v0.5.4
 - Fixed: network-model lines twisted at sharp corners (nodes narrowed with Node Controller Renewal): pieces now end exactly at sharp turns and use one-sided directions there, and no piece turns more than about 30 degrees.

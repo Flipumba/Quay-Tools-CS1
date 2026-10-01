@@ -21,8 +21,6 @@ namespace QuayTools
         private const int MaxBuildsPerFrame = 6;
         private const int ChecksPerFrame = 6;
         private const float MaxDistance = 3500f;
-        private const float PieceLength = 6f;   // metres: longest piece of a line
-        private const int MaxPieces = 58;
         private const int CapStartPart = 60;
         private const int CapEndPart = 61;
 
@@ -269,36 +267,15 @@ namespace QuayTools
 
             bool rotated = line.Flip ^ waterRight; // false: the model faces the water side
 
-            // One cubic cannot follow a bend, an S-curve or the heights of a long quay (nor the bridged gaps at the nodes),
-            // so the line is cut into short pieces, each fitted to the sampled path with the path's own directions
-            // at its ends (the game's matrices keep the texture continuous from piece to piece).
-            List<float> bounds = new List<float>();
-            bounds.Add(d0);
-            List<float> corners = FindCorners(path, d0, d1, len);
-            bounds.AddRange(corners);
-            bounds.Add(d1);
-
-            int made = 0;
-            for (int sp = 0; sp + 1 < bounds.Count && made < MaxPieces; sp++)
+            // The line is built the way the quay's own fences were built before: ONE curve from the start of the segment to its end
+            // (the blend of the segment's real edge curves, taken from the game and the mods that change the corners). Only the gaps
+            // at the nodes (a node moved away from the segment end, Node Controller Renewal) are separate pieces, one per gap.
+            List<Vector3[]> pieces = CutPieces(path, d0, d1);
+            float phase = 0f; // texture coordinate (v) at the start of the next piece: the texture runs on without a break
+            for (int i = 0; i < pieces.Count; i++)
             {
-                float sa = bounds[sp], sb = bounds[sp + 1];
-                if (sb - sa < 0.05f) continue;
-
-                // pieces of at most PieceLength, and fewer than ~30 degrees of turn in each
-                int n = Mathf.Max(1, Mathf.CeilToInt((sb - sa) / PieceLength));
-                float turn = Vector3.Angle(FlatDir(path, sa, 1, len), FlatDir(path, sb, -1, len));
-                n = Mathf.Max(n, Mathf.CeilToInt(turn / 30f));
-                n = Mathf.Min(n, MaxPieces - made);
-
-                for (int i = 0; i < n; i++)
-                {
-                    float a = sa + (sb - sa) * i / n;
-                    float b = sa + (sb - sa) * (i + 1) / n;
-                    Vector3[] Q = MakeCurve(path, a, b, len, i == 0, i == n - 1);
-                    Part part = MakeRibbon(id, index, made, Q, fence, hw, rotated, 1f, true);
-                    made++;
-                    if (part != null) item.Parts.Add(part);
-                }
+                Part part = MakeRibbon(id, index, i, pieces[i], fence, hw, rotated, 1f, ref phase);
+                if (part != null) item.Parts.Add(part);
             }
 
             if (line.CapStart && cornersOk)
@@ -320,73 +297,54 @@ namespace QuayTools
             }
         }
 
-        /// <summary>Horizontal direction of the path at distance d: side -1 looks back, +1 forward, 0 both ways.</summary>
-        private static Vector3 FlatDir(DecalRenderer.Path path, float d, int side, float len)
+        /// <summary>The pieces [d0, d1] of the path: every cubic the path is made of (bridge at the start, edge curve, bridge at the end) is ONE piece.</summary>
+        private static List<Vector3[]> CutPieces(DecalRenderer.Path path, float d0, float d1)
         {
-            const float Step = 0.6f;
-            Vector3 p, q, l;
-            float lo = side > 0 ? d : Mathf.Max(0f, d - Step);
-            float hi = side < 0 ? d : Mathf.Min(len, d + Step);
-            path.ResetCursor();
-            path.Eval(lo, out p, out l);
-            path.Eval(hi, out q, out l);
-            Vector3 v = q - p;
-            v.y = 0f;
-            return v.sqrMagnitude > 1e-8f ? v.normalized : Vector3.forward;
-        }
+            const int Table = 24;
+            List<Vector3[]> result = new List<Vector3[]>();
 
-        /// <summary>Distances (inside the line) where the path turns sharply, for example at nodes narrowed with Node Controller Renewal: pieces end there instead of being bent around the corner.</summary>
-        private static List<float> FindCorners(DecalRenderer.Path path, float d0, float d1, float len)
-        {
-            List<float> result = new List<float>();
-            const float Probe = 0.5f, Window = 0.8f, Angle = 28f;
-            float best = 0f, bestAt = -1f, last = -100f;
-            for (float d = d0 + 0.4f; d < d1 - 0.4f; d += Probe)
+            for (int ci = 0; ci < path.Cubics.Count; ci++)
             {
-                Vector3 p0, p1, p2, l;
-                path.ResetCursor();
-                path.Eval(Mathf.Max(0f, d - Window), out p0, out l);
-                path.Eval(d, out p1, out l);
-                path.Eval(Mathf.Min(len, d + Window), out p2, out l);
-                Vector3 a = p1 - p0, b = p2 - p1;
-                a.y = 0f;
-                b.y = 0f;
-                float ang = a.sqrMagnitude > 1e-6f && b.sqrMagnitude > 1e-6f ? Vector3.Angle(a, b) : 0f;
+                float from = path.CubicFrom[ci], to = path.CubicTo[ci];
+                float a = Mathf.Max(d0, from), b = Mathf.Min(d1, to);
+                if (b - a < 0.05f || to - from < 0.01f) continue;
 
-                if (ang > Angle)
+                Vector3[] C = path.Cubics[ci];
+                if (a <= from + 0.001f && b >= to - 0.001f)
                 {
-                    if (ang > best)
-                    {
-                        best = ang;
-                        bestAt = d;
-                    }
+                    result.Add(new Vector3[] { C[0], C[1], C[2], C[3] }); // untrimmed: the curve itself
+                    continue;
                 }
-                else if (bestAt >= 0f)
+
+                // trimmed: the exact part of the cubic (arc length table of the cubic: parameter <-> fraction of its length)
+                float[] len = new float[Table + 1];
+                Vector3 prev = C[0];
+                for (int i = 1; i <= Table; i++)
                 {
-                    if (bestAt - last > 1.2f) result.Add(bestAt);
-                    if (bestAt - last > 1.2f) last = bestAt;
-                    best = 0f;
-                    bestAt = -1f;
+                    float u = i / (float)Table, v = 1f - u;
+                    Vector3 pt = v * v * v * C[0] + 3f * v * v * u * C[1] + 3f * v * u * u * C[2] + u * u * u * C[3];
+                    len[i] = len[i - 1] + (pt - prev).magnitude;
+                    prev = pt;
                 }
+                if (len[Table] < 0.01f) continue;
+
+                float ta = ParamAt(len, (a - from) / (to - from)), tb = ParamAt(len, (b - from) / (to - from));
+                if (tb - ta < 0.001f) continue;
+                result.Add(FenceHeight.SubCubic(C, ta, tb));
             }
-            if (bestAt >= 0f && bestAt - last > 1.2f && bestAt < d1 - 0.4f) result.Add(bestAt);
             return result;
         }
 
-        /// <summary>One cubic through the part [d0, d1] of the sampled path. The end directions are the path's own: central at a joint between two pieces, one-sided at the ends of the line and at sharp corners.</summary>
-        private static Vector3[] MakeCurve(DecalRenderer.Path path, float d0, float d1, float len, bool hardStart, bool hardEnd)
+        /// <summary>Curve parameter at the given fraction of the arc length (table with equal parameter steps).</summary>
+        private static float ParamAt(float[] len, float fraction)
         {
-            Vector3 p0, p3, l;
-            path.ResetCursor();
-            path.Eval(d0, out p0, out l);
-            path.Eval(d1, out p3, out l);
-
-            Vector3 dirA = FlatDir(path, d0, hardStart ? 1 : 0, len);
-            Vector3 dirB = FlatDir(path, d1, hardEnd ? -1 : 0, len);
-
-            Vector3 m1, m2;
-            NetSegment.CalculateMiddlePoints(p0, dirA, p3, -dirB, false, false, out m1, out m2);
-            return new Vector3[] { p0, m1, m2, p3 };
+            int n = len.Length - 1;
+            float target = Mathf.Clamp01(fraction) * len[n];
+            int i = 1;
+            while (i < n && len[i] < target) i++;
+            float span = len[i] - len[i - 1];
+            float f = span > 1e-6f ? (target - len[i - 1]) / span : 0f;
+            return Mathf.Clamp01((i - 1 + f) / n);
         }
 
         /// <summary>
@@ -420,27 +378,38 @@ namespace QuayTools
             Vector3[] B = { b0, Vector3.Lerp(b0, b3, 1f / 3f), Vector3.Lerp(b0, b3, 2f / 3f), b3 };
             Vector3[] Q = { pL, Vector3.Lerp(pL, pR, 1f / 3f), Vector3.Lerp(pL, pR, 2f / 3f), pR };
 
-            return Assemble(id, index, partIndex, Q, A, B, fence, hw, true, 1.5f);
+            float phase = 0f;
+            return Assemble(id, index, partIndex, Q, A, B, fence, hw, true, 1.5f, ref phase);
         }
 
-        private static Part MakeRibbon(ushort id, int index, int partIndex, Vector3[] Q, NetInfo fence, float hw, bool rotated, float vDivide, bool unused)
+        private static Part MakeRibbon(ushort id, int index, int partIndex, Vector3[] Q, NetInfo fence, float hw, bool rotated, float vDivide, ref float phase)
         {
+            // the ribbon edges are the curve moved sideways by half the model width at its four control points (the way the fence
+            // ribbons of the quay were always built); the direction at a control point comes from the control polygon
             Vector3[] tangent = { Q[1] - Q[0], Q[2] - Q[0], Q[3] - Q[1], Q[3] - Q[2] };
+            Vector3 chord = Q[3] - Q[0];
             Vector3[] A = new Vector3[4]; // left edge of the ribbon
             Vector3[] B = new Vector3[4]; // right edge of the ribbon
             for (int i = 0; i < 4; i++)
             {
-                Vector3 n = Vector3.Cross(tangent[i], Vector3.up);
+                Vector3 t = tangent[i];
+                t.y = 0f;
+                if (t.sqrMagnitude < 1e-8f)
+                {
+                    t = chord;
+                    t.y = 0f;
+                }
+                Vector3 n = Vector3.Cross(t, Vector3.up);
                 n.y = 0f;
                 n = n.sqrMagnitude > 1e-8f ? n.normalized : Vector3.zero;
                 A[i] = Q[i] + n * hw;
                 B[i] = Q[i] - n * hw;
             }
-            return Assemble(id, index, partIndex, Q, A, B, fence, hw, rotated, vDivide);
+            return Assemble(id, index, partIndex, Q, A, B, fence, hw, rotated, vDivide, ref phase);
         }
 
         /// <summary>The render data of one piece, like NetSegment.RefreshRoadFence fills it, and the call of RenderSegments.</summary>
-        private static Part Assemble(ushort id, int index, int partIndex, Vector3[] Q, Vector3[] A, Vector3[] B, NetInfo fence, float hw, bool rotated, float vDivide)
+        private static Part Assemble(ushort id, int index, int partIndex, Vector3[] Q, Vector3[] A, Vector3[] B, NetInfo fence, float hw, bool rotated, float vDivide, ref float phase)
         {
             RenderManager.Instance data = new RenderManager.Instance();
             Vector3 position = (Q[0] + Q[3]) * 0.5f;
@@ -457,6 +426,18 @@ namespace QuayTools
             float vScale = fence.m_netAI.GetVScale() / vDivide;
             data.m_dataMatrix0 = NetSegment.CalculateControlMatrix(A[0], A[1], A[2], A[3], B[0], B[1], B[2], B[3], position, vScale);
             data.m_dataMatrix1 = NetSegment.CalculateControlMatrix(B[0], B[1], B[2], B[3], A[0], A[1], A[2], A[3], position, vScale);
+
+            // The game rounds the texture length of a piece to quarter tiles (fine for a whole segment, but our pieces are
+            // short: the texture would be stretched and restart at every joint). The texture coordinates of the four
+            // control points (row 3 of the matrices) are set here: no rounding, and the coordinate carries on from the previous piece.
+            float k0, k3;
+            float[] kA = Knots(A, B, vScale), kB = Knots(B, A, vScale);
+            k0 = kA[0];
+            k3 = kA[3];
+            float shift = phase - k0;
+            data.m_dataMatrix0 = WithKnots(data.m_dataMatrix0, kA, shift);
+            data.m_dataMatrix1 = WithKnots(data.m_dataMatrix1, kB, shift);
+            phase = phase + (k3 - k0);
 
             if (fence.m_requireSurfaceMaps)
             {
@@ -510,6 +491,26 @@ namespace QuayTools
             part.Centre = position;
             part.Radius = (Q[3] - Q[0]).magnitude * 0.5f + hw + 30f;
             return part;
+        }
+
+        /// <summary>The texture coordinates of the four control points as NetSegment.CalculateControlMatrix computes them, without its rounding.</summary>
+        private static float[] Knots(Vector3[] a, Vector3[] b, float vScale)
+        {
+            Vector3 d1 = a[1] - a[0];
+            float k0 = Vector3.Dot(a[0] - b[0], d1) / Mathf.Max(0.001f, d1.magnitude) * vScale * 0.5f;
+            float l1 = Vector3.Distance(a[0] + b[0], a[1] + b[1]) * vScale * 0.5f;
+            float l2 = Vector3.Distance(a[1] + b[1], a[2] + b[2]) * vScale * 0.5f;
+            float l3 = Vector3.Distance(a[2] + b[2], a[3] + b[3]) * vScale * 0.5f;
+            return new float[] { k0, k0 + l1, k0 + l1 + l2, k0 + l1 + l2 + l3 };
+        }
+
+        private static Matrix4x4 WithKnots(Matrix4x4 m, float[] k, float shift)
+        {
+            m.m30 = k[0] + shift;
+            m.m31 = k[1] + shift;
+            m.m32 = k[2] + shift;
+            m.m33 = k[3] + shift;
+            return m;
         }
 
         private static float WindAt(Vector3 position)

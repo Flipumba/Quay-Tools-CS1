@@ -13,6 +13,7 @@ namespace QuayTools
         public PropLine Props;
         public int Lock = -1; // see LockStore.Get
         public bool NoPeds;
+        public bool Hide;
 
         public static SegSnap Capture(ushort id)
         {
@@ -25,6 +26,7 @@ namespace QuayTools
             if (PropLineStore.TryGet(id, out p)) s.Props = p.Clone();
             s.Lock = LockStore.Get(id);
             s.NoPeds = PedStore.Has(id);
+            s.Hide = HideStore.Has(id);
             return s;
         }
 
@@ -37,7 +39,7 @@ namespace QuayTools
             if (Decals != null && !Decals.SameAs(o.Decals)) return false;
             if ((Props == null) != (o.Props == null)) return false;
             if (Props != null && !Props.SameAs(o.Props)) return false;
-            if (Lock != o.Lock || NoPeds != o.NoPeds) return false;
+            if (Lock != o.Lock || NoPeds != o.NoPeds || Hide != o.Hide) return false;
             return true;
         }
 
@@ -49,6 +51,7 @@ namespace QuayTools
             PropLineStore.Set(id, Props == null ? null : Props.Clone());
             LockStore.SetRaw(id, Lock);
             PedStore.SetBlocked(id, NoPeds);
+            HideStore.SetHidden(id, Hide);
         }
     }
 

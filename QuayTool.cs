@@ -17,12 +17,13 @@ namespace QuayTools
             Invert = 0,
             Lock = 1,
             RemovePedestrian = 2,
-            AddNetwork = 3,   // network-model lines ("Network-line")
-            PropLine = 4,
-            Decal = 5         // texture paths ("Texture-path")
+            HideProps = 3,    // hides the default props of the network model of a segment
+            AddNetwork = 4,   // network-model lines ("Network-line")
+            PropLine = 5,
+            Decal = 6         // texture paths ("Texture-path")
         }
 
-        public const int ModeCount = 6;
+        public const int ModeCount = 7;
 
         private static readonly Color HoverColor = new Color(0.10f, 0.70f, 1.00f, 0.55f);
         private static readonly Color ChainColor = new Color(0.30f, 1.00f, 0.55f, 0.55f);
@@ -62,13 +63,13 @@ namespace QuayTools
         /// <summary>Modes that already do something. The rest are shown disabled in the panel.</summary>
         public static bool IsImplemented(Mode mode)
         {
-            return mode == Mode.Invert || mode == Mode.RemovePedestrian || mode == Mode.AddNetwork || mode == Mode.Decal || mode == Mode.PropLine || mode == Mode.Lock;
+            return mode == Mode.Invert || mode == Mode.RemovePedestrian || mode == Mode.AddNetwork || mode == Mode.Decal || mode == Mode.PropLine || mode == Mode.Lock || mode == Mode.HideProps;
         }
 
         /// <summary>Modes in which segments are selected first and edited in the window.</summary>
         public static bool IsSelectMode(Mode mode)
         {
-            return mode == Mode.AddNetwork || mode == Mode.Decal || mode == Mode.PropLine || mode == Mode.Lock || mode == Mode.RemovePedestrian;
+            return mode == Mode.AddNetwork || mode == Mode.Decal || mode == Mode.PropLine || mode == Mode.Lock || mode == Mode.RemovePedestrian || mode == Mode.HideProps;
         }
 
         public static string HintFor(Mode mode)
@@ -81,6 +82,7 @@ namespace QuayTools
                 case Mode.PropLine: return Loc.T("hint_props");
                 case Mode.Lock: return Loc.T("hint_lock");
                 case Mode.RemovePedestrian: return Loc.T("hint_nopeds");
+                case Mode.HideProps: return Loc.T("hint_hideprops");
             }
             return Loc.T("hint_soon");
         }
@@ -246,6 +248,7 @@ namespace QuayTools
                 case Mode.PropLine:
                 case Mode.Lock:
                 case Mode.RemovePedestrian:
+                case Mode.HideProps:
                     ToggleSelection();
                     break;
             }
@@ -320,6 +323,7 @@ namespace QuayTools
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
             if (CurrentMode == Mode.RemovePedestrian) FenceApplier.SetNoPeds(SelectionCopy(), locked, Report);
+            else if (CurrentMode == Mode.HideProps) FenceApplier.SetHideProps(SelectionCopy(), locked, Report);
             else FenceApplier.SetLock(SelectionCopy(), locked, Report);
         }
 
@@ -421,6 +425,9 @@ namespace QuayTools
         {
             base.RenderOverlay(cameraInfo);
 
+            // while a slider is dragged (and the option is on) the highlights are hidden so that the result can be seen
+            if (Settings.HideHighlightUi && QuayToolPanel.SliderDragging) return;
+
             if (Settings.MarkEdited)
             {
                 // faint highlight of every segment edited by the mod
@@ -431,10 +438,10 @@ namespace QuayTools
                 }
             }
 
-            if (CurrentMode == Mode.Lock || CurrentMode == Mode.RemovePedestrian)
+            if (CurrentMode == Mode.Lock || CurrentMode == Mode.RemovePedestrian || CurrentMode == Mode.HideProps)
             {
-                // every locked / pedestrian-free segment is marked red
-                List<ushort> locked = CurrentMode == Mode.Lock ? LockStore.Snapshot() : PedStore.Snapshot();
+                // every locked / pedestrian-free / props-free segment is marked red
+                List<ushort> locked = CurrentMode == Mode.Lock ? LockStore.Snapshot() : CurrentMode == Mode.HideProps ? HideStore.Snapshot() : PedStore.Snapshot();
                 for (int i = 0; i < locked.Count; i++)
                 {
                     if (!_selected.Contains(locked[i])) QuayGeometry.DrawModel(cameraInfo, locked[i], LockedColor);

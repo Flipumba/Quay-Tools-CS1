@@ -41,6 +41,7 @@ namespace QuayTools
                     }
 
                     PedestrianPathPatch.Apply(harmony);
+                    HidePropsPatch.Apply(harmony);
 
                     Debug.Log("[QuayTools] Harmony patches applied: " + ok + " ok, " + failed + " failed");
                 });

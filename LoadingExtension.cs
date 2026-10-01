@@ -60,6 +60,7 @@ namespace QuayTools
             PropLineStore.Clear();
             LockStore.Clear();
             PedStore.Clear();
+            HideStore.Clear();
             NetLineStore.Clear();
             Bootstrap.Shutdown();
             Debug.Log("[QuayTools] Shutdown finished");

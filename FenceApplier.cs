@@ -154,6 +154,14 @@ namespace QuayTools
             if (blocked) Singleton<SimulationManager>.instance.AddAction(PedestrianPathPatch.RepathPending);
         }
 
+        public static void SetHideProps(List<ushort> segments, bool hidden, Action<string> report)
+        {
+            Run(segments, null, delegate (ushort id)
+            {
+                HideStore.SetHidden(id, hidden);
+            }, hidden ? "hp_done" : "hp_undone", report, true);
+        }
+
         // ---------- prop lines ----------
 
         /// <summary>Appends a prop line (a copy of the template) to every listed segment.</summary>
@@ -261,8 +269,10 @@ namespace QuayTools
                 for (int i = 0; i < copy.Paths.Count; i++)
                 {
                     string keep = copy.Paths[i].Prop;
+                    int keepScale = copy.Paths[i].Scale; // the tile size belongs to the chosen texture
                     copy.Paths[i].ResetToDefaults();
                     copy.Paths[i].Prop = keep;
+                    copy.Paths[i].Scale = keepScale;
                 }
                 DecalStore.Set(id, copy);
             }, "reset_done", report, true);

@@ -227,11 +227,13 @@ namespace QuayTools
         {
             NetSegment seg = NetManager.instance.m_segments.m_buffer[id];
             Vector3[] Qs = null, Qe = null;
+            Vector3[] own = path.Cubics.Count > 0 ? path.Cubics[0] : null;
+            if (own == null) return;
 
             if (JoinsTwo(seg.m_startNode))
             {
                 Vector3[] q = new Vector3[4];
-                if (DecalRenderer.BridgeControlPoints(id, seg.m_startNode, true, c, tmp, lift, waterRight, q) &&
+                if (DecalRenderer.BridgeControlPoints(id, seg.m_startNode, true, c, tmp, lift, waterRight, own, q) &&
                     new Vector2(q[0].x - q[3].x, q[0].z - q[3].z).magnitude > 0.05f)
                 {
                     Qs = FenceHeight.SubCubic(q, 0.5f, 1f); // second half: from the node middle to the segment start
@@ -240,7 +242,7 @@ namespace QuayTools
             if (JoinsTwo(seg.m_endNode))
             {
                 Vector3[] q = new Vector3[4];
-                if (DecalRenderer.BridgeControlPoints(id, seg.m_endNode, false, c, tmp, lift, waterRight, q) &&
+                if (DecalRenderer.BridgeControlPoints(id, seg.m_endNode, false, c, tmp, lift, waterRight, own, q) &&
                     new Vector2(q[0].x - q[3].x, q[0].z - q[3].z).magnitude > 0.05f)
                 {
                     Qe = FenceHeight.SubCubic(q, 0f, 0.5f); // first half: from the segment end to the node middle
@@ -269,6 +271,8 @@ namespace QuayTools
                 step = len / last;
             }
 
+            float shiftMod = Mathf.Repeat(e.ShiftX * FenceStore.Unit, step); // the grid slides along the line, the ends stay
+
             List<Vector3> positions = new List<Vector3>();
             List<Matrix4x4> matrices = new List<Matrix4x4>();
             List<float> scales = new List<float>();
@@ -278,7 +282,7 @@ namespace QuayTools
             for (int i = 0; i <= last; i++)
             {
                 double r1 = rnd.NextDouble(), r2 = rnd.NextDouble(); // drawn for every grid position, kept or not
-                float d = i * step;
+                float d = i * step + shiftMod;
                 if (d < lo || d > hi) continue;
 
                 Vector3 pos, left;

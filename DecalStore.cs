@@ -16,16 +16,20 @@ namespace QuayTools
         public const int DefaultBox = 80;   // 8.0 m: height of the projection box of placed decals
         public const int MinBox = 5;        // 0.5 m
         public const int MaxBox = 500;      // 50 m
+        public const int MaxShift = 500;    // 50 m (start / end trim)
+        public const int StripLift = 10;    // 1.0 m: default height of a plane (the plane lies lower than the quay surface)
 
         public int Width = DefaultWidth; // units of FenceStore.Unit (0.1 m)
         public int Lateral;              // sideways shift from the middle of the quay, right of start->end positive
         public int Lift;                 // height above the quay surface
+        public int ShiftX;               // units of 0.1 m: the texture / tiles slide along the path (the ends of the path stay)
         public byte R = 255, G = 255, B = 255, A = 255; // tint of a decal (multiplies its colours and opacity), fill colour of a plain path
         public string Prop;            // name of the decal prop (PropInfo); null = plain coloured strip
         public int Scale = DefaultScale; // world width of one repeat of the decal texture, units of 0.1 m
         public int Step;                 // distance between placed decal tiles along the path, units of 0.1 m; 0 = one tile length
         public int Box = DefaultBox;     // height (thickness) of the projection box of placed decals, units of 0.1 m
-        public bool Strip;               // alternative method: one textured strip with a composed texture instead of placed game decals
+        public bool Strip;               // plane mode: one textured strip with a composed texture instead of placed game decals (chosen when the path is added)
+        public int StartShift, EndShift; // units of 0.1 m, -MaxShift..0: how much the path is shortened at that end
 
         public Color TintColor
         {
@@ -41,7 +45,10 @@ namespace QuayTools
         {
             Width = DefaultWidth;
             Lateral = 0;
-            Lift = 0;
+            ShiftX = 0;
+            Lift = Strip ? StripLift : 0;
+            StartShift = 0;
+            EndShift = 0;
             R = 255;
             G = 255;
             B = 255;
@@ -49,13 +56,13 @@ namespace QuayTools
             Scale = DefaultScale;
             Step = 0;
             Box = DefaultBox;
-            Strip = false;
         }
 
         public bool SameAs(DecalSettings o)
         {
-            return o != null && Width == o.Width && Lateral == o.Lateral && Lift == o.Lift && R == o.R && G == o.G && B == o.B && A == o.A &&
-                   Scale == o.Scale && Step == o.Step && Box == o.Box && Prop == o.Prop && Strip == o.Strip;
+            return o != null && Width == o.Width && Lateral == o.Lateral && ShiftX == o.ShiftX && Lift == o.Lift && R == o.R && G == o.G && B == o.B && A == o.A &&
+                   Scale == o.Scale && Step == o.Step && Box == o.Box && Prop == o.Prop && Strip == o.Strip &&
+                   StartShift == o.StartShift && EndShift == o.EndShift;
         }
     }
 
@@ -92,6 +99,7 @@ namespace QuayTools
         public const int MaxBox = DecalSettings.MaxBox;
         public const int MinWidth = 1;    // 0.1 m
         public const int MaxWidth = 500;  // 50 m
+        public const int MaxShift = DecalSettings.MaxShift;
         public const int MaxPathsPerSegment = 15;
 
         // palette of the old versions (format 2 saves stored an index)
@@ -105,7 +113,7 @@ namespace QuayTools
             new Color32(20, 20, 20, 245)     // black
         };
 
-        private const int FormatVersion = 5;
+        private const int FormatVersion = 7;
         private static readonly Dictionary<ushort, DecalSet> Map = new Dictionary<ushort, DecalSet>();
 
         /// <summary>Raised (flag) whenever the content changes; the renderer rebuilds its meshes.</summary>
@@ -212,6 +220,9 @@ namespace QuayTools
                             w.Write(s.Step);
                             w.Write(s.Box);
                             w.Write(s.Strip);
+                            w.Write(s.StartShift);
+                            w.Write(s.EndShift);
+                            w.Write(s.ShiftX);
                         }
                     }
                 }
@@ -254,6 +265,12 @@ namespace QuayTools
             }
             if (version >= 5) s.Strip = r.ReadBoolean();
             else s.Strip = Settings.LegacyDecalStrip; // older saves: the method was a global option
+            if (version >= 6)
+            {
+                s.StartShift = Mathf.Clamp(r.ReadInt32(), -MaxShift, 0);
+                s.EndShift = Mathf.Clamp(r.ReadInt32(), -MaxShift, 0);
+            }
+            if (version >= 7) s.ShiftX = Mathf.Clamp(r.ReadInt32(), -FenceStore.MaxUnits, FenceStore.MaxUnits);
             return s;
         }
 

@@ -23,6 +23,7 @@ namespace QuayTools
         private static readonly SavedBool BridgeCentre;
         private static readonly SavedBool MarkEditedValue;
         private static readonly SavedInt IconSizeValue;
+        private static readonly SavedBool HideHighlightValue;
         private static readonly SavedString[] FavValues = new SavedString[3];
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
@@ -45,6 +46,7 @@ namespace QuayTools
             BridgeCentre = new SavedBool("BridgeCentreLine", FileName, true, true);
             MarkEditedValue = new SavedBool("MarkEdited", FileName, true, true);
             IconSizeValue = new SavedInt("MarkIconSize", FileName, 2, true);
+            HideHighlightValue = new SavedBool("HideHighlightUi", FileName, false, true);
             for (int i = 0; i < FavValues.Length; i++) FavValues[i] = new SavedString("Favourites" + i, FileName, string.Empty, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
@@ -100,6 +102,13 @@ namespace QuayTools
         public static int MarkIconSize
         {
             get { return Mathf.Clamp(IconSizeValue.value, 1, 3); }
+        }
+
+        /// <summary>Hide the highlight of the quay borders and lines while a slider is being dragged.</summary>
+        public static bool HideHighlightUi
+        {
+            get { return HideHighlightValue.value; }
+            set { HideHighlightValue.value = value; }
         }
 
         /// <summary>While the tool is active, segments edited by the mod are highlighted and carry tool icons.</summary>

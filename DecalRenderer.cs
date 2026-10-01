@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using ColossalFramework;
 using ColossalFramework.Math;
 using UnityEngine;
@@ -23,7 +24,6 @@ namespace QuayTools
         private const int MaxBuildsPerFrame = 12;
         private const int ChecksPerFrame = 6;
         private const float RetrySeconds = 3f;
-        private const float SharpBendDegrees = 30f; // turn angle at a node from which the bridge follows the centre line
         private const float BridgeBox = 20f;      // metres: projection box height of placed decals over a gap between segment ends
         private const int MaxTiles = 1500;         // placed decals per segment
 
@@ -61,6 +61,8 @@ namespace QuayTools
             public int BridgeStart, BridgeEnd;   // 0: no bridge, 1: the neighbour bridges the gap, 2: this path bridges the gap up to the neighbour
             public List<Matrix4x4> Tiles;   // placed game decals (one matrix per tile)
             public bool Placed;
+            public PropInfo PlaceProp;   // the decal prop whose mesh the placed tiles use (the stand-in decal for a path without a texture)
+            public Material PlaceMat;    // own material of a stand-in decal; null = the prop's material
             public bool WaterRight;      // water side of the segment when built (the sideways shift is signed toward water)
         }
 
@@ -76,6 +78,10 @@ namespace QuayTools
         private readonly Dictionary<PropInfo, Material> _simple = new Dictionary<PropInfo, Material>();
         private readonly Dictionary<PropInfo, Texture2D> _composite = new Dictionary<PropInfo, Texture2D>();
         private readonly HashSet<PropInfo> _compositeFailed = new HashSet<PropInfo>();
+        private Texture2D _pavement;           // the game's theme pavement texture (base of a path without a decal)
+        private bool _pavementSearched;
+        private Material _pavUnlit, _pavLit;
+        private float _pavementTile = 6f;     // metres covered by one repeat of the pavement texture
         private Shader _shader;
         private bool _shaderSearched;
         private bool _shaderLit;
@@ -84,8 +90,16 @@ namespace QuayTools
         private int _diagnostics;
         private int _gapLogs;
 
+        internal static DecalRenderer Instance;
+
+        private void Awake()
+        {
+            Instance = this;
+        }
+
         private void OnDestroy()
         {
+            if (Instance == this) Instance = null;
             foreach (KeyValuePair<int, Item> kv in _items)
             {
                 if (kv.Value.Mesh != null) Destroy(kv.Value.Mesh);
@@ -94,6 +108,11 @@ namespace QuayTools
 
             if (_plain != null) Destroy(_plain);
             if (_litPlain != null) Destroy(_litPlain);
+            if (_pavUnlit != null) Destroy(_pavUnlit);
+            if (_pavLit != null) Destroy(_pavLit);
+            if (_pavement != null) Destroy(_pavement);
+            if (_standInMat != null) Destroy(_standInMat);
+            if (_white != null) Destroy(_white);
             foreach (KeyValuePair<PropInfo, Material> kv in _litSimple)
             {
                 if (kv.Value != null) Destroy(kv.Value);
@@ -337,18 +356,13 @@ namespace QuayTools
             return neighbourHasIt && other < id ? 1 : 2;
         }
 
-        /// <summary>
-        /// Control points of the path across the gap between this segment's end and its neighbour's end at the node. The
-        /// gap is treated as a short segment: its left and right edge curves join the corners of the two ends (positions
-        /// and directions come from the game's corner calculation, so the Node Controller Renewal edits are included:
-        /// shifted borders, border angles as different lengths of the two edge curves, heights), and the path is blended
-        /// from them exactly like the path of a real segment. Q runs in the travel direction of this path: from the
-        /// neighbour to the start of this path, or from the end of this path to the neighbour.
-        /// </summary>
-        internal static bool BridgeControlPoints(ushort id, ushort nodeId, bool atOwnStart, Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] Q)
-        {
-            if (nodeId == 0) return false;
+        private const float SharpBendDegrees = 110f; // turn angle at a node from which the bridge follows the centre line
 
+        /// <summary>The line of the other segment at a node that joins exactly two segments, calculated with the settings of this line.</summary>
+        private static bool NeighbourLine(ushort id, ushort nodeId, DecalSettings s, float lift, Vector3[] N, out bool nbAtStart)
+        {
+            nbAtStart = false;
+            if (nodeId == 0) return false;
             NetManager nm = NetManager.instance;
             NetNode node = nm.m_nodes.m_buffer[nodeId];
             ushort other = 0;
@@ -358,28 +372,65 @@ namespace QuayTools
                 if (seg != 0 && seg != id) other = seg;
             }
             if (other == 0) return false;
-
             Corners oc;
             if (!ReadCorners(other, out oc)) return false;
+            if (!CornerControlPoints(oc, s, lift, QuayGeometry.GetFrame(other).WaterIsRight, N)) return false;
+            nbAtStart = nm.m_segments.m_buffer[other].m_startNode == nodeId;
+            return true;
+        }
 
-            bool nbAtStart = nm.m_segments.m_buffer[other].m_startNode == nodeId;
-            Vector3 n0 = nbAtStart ? oc.sL : oc.eL, d0 = nbAtStart ? oc.dSL : oc.dEL;
-            Vector3 n1 = nbAtStart ? oc.sR : oc.eR, d1 = nbAtStart ? oc.dSR : oc.dER;
-
-            Vector3 ownL = atOwnStart ? c.sL : c.eL, dOwnL = atOwnStart ? c.dSL : c.dEL;
-            Vector3 ownR = atOwnStart ? c.sR : c.eR, dOwnR = atOwnStart ? c.dSR : c.dER;
-
-            // which neighbour corner lies on the left side of this path
-            float straight = (n0 - ownL).sqrMagnitude + (n1 - ownR).sqrMagnitude;
-            float crossed = (n1 - ownL).sqrMagnitude + (n0 - ownR).sqrMagnitude;
-            Vector3 nL = n0, dnL = d0, nR = n1, dnR = d1;
-            if (crossed < straight)
+        /// <summary>Corner of a segment end by the side going AWAY from the node (as the game and Node Controller Renewal number them).</summary>
+        private static void AwayCorner(Corners c, bool atStart, bool awayLeft, out Vector3 pos, out Vector3 dir)
+        {
+            if (atStart)
             {
-                nL = n1;
-                dnL = d1;
-                nR = n0;
-                dnR = d0;
+                pos = awayLeft ? c.sL : c.sR;
+                dir = awayLeft ? c.dSL : c.dSR;
             }
+            else
+            {
+                pos = awayLeft ? c.eR : c.eL; // geometric left at the end node is the right side going away from it
+                dir = awayLeft ? c.dER : c.dEL;
+            }
+        }
+
+        /// <summary>
+        /// Control points of the path across the gap between this segment's end and its neighbour's end at the node.
+        /// The shape of the gap comes from the node: its left and right edge curves join the corners of the two ends (the
+        /// game's corner calculation, so Node Controller Renewal edits, heights and the bend between the two borders are
+        /// included) and the path is blended from them. The two ends of the bridge are then fixed to the real end points
+        /// of the two lines, and the bridge leaves each of them in the direction of that segment's own line (the segment
+        /// data, not the node), so the line passes the border of the node without a kink whatever the sideways shift is.
+        /// P is the line of this segment. Q runs in the travel direction of this path: from the neighbour to the start of
+        /// this path, or from the end of this path to the neighbour.
+        /// </summary>
+        internal static bool BridgeControlPoints(ushort id, ushort nodeId, bool atOwnStart, Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] P, Vector3[] Q)
+        {
+            if (nodeId == 0 || P == null) return false;
+
+            Vector3[] N = new Vector3[4];
+            bool nbAtStart;
+            if (!NeighbourLine(id, nodeId, s, lift, N, out nbAtStart)) return false;
+
+            NetManager nm = NetManager.instance;
+            NetNode node = nm.m_nodes.m_buffer[nodeId];
+            ushort other = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                ushort seg = node.GetSegment(i);
+                if (seg != 0 && seg != id) other = seg;
+            }
+            Corners oc;
+            if (other == 0 || !ReadCorners(other, out oc)) return false;
+
+            // The game joins the corners of the two ends by their topology (the "left" corner going away from the node of one
+            // segment with the "right" corner going away of the other one), not by distance. Own corners on the left / right
+            // of the travel direction of this path, and the neighbour corners they are joined with:
+            Vector3 ownL, dOwnL, ownR, dOwnR, nL, dnL, nR, dnR;
+            AwayCorner(c, atOwnStart, atOwnStart, out ownL, out dOwnL);
+            AwayCorner(c, atOwnStart, !atOwnStart, out ownR, out dOwnR);
+            AwayCorner(oc, nbAtStart, !atOwnStart, out nL, out dnL);
+            AwayCorner(oc, nbAtStart, atOwnStart, out nR, out dnR);
 
             // A is where the bridge starts, B where it ends (travel direction of this path)
             Vector3 aL, aR, bL, bR, daL, daR, dbL, dbR;
@@ -394,8 +445,9 @@ namespace QuayTools
                 bL = nL; dbL = dnL; bR = nR; dbR = dnR;
             }
 
-            // Sharp bend: the two edge curves of the gap cross or collapse (the inner corners of the two ends meet), so a
-            // path blended from them ends up off the quay. Follow one curve between the centres of the two ends instead.
+            bool done = false;
+
+            // Sharp bend: the two edge curves of the gap cross or collapse, so a path blended from them ends up off the quay.
             if (Settings.BridgeCentreLine)
             {
                 Vector3 dOwn = dOwnL + dOwnR, dNb = dnL + dnR;
@@ -409,19 +461,65 @@ namespace QuayTools
                     {
                         Vector3 m1, m2;
                         NetSegment.CalculateMiddlePoints(cA, -dA.normalized, cB, -dB.normalized, false, false, out m1, out m2);
-                        return CentreControlPoints(new Vector3[] { cA, m1, m2, cB }, s, lift, waterRight, Q);
+                        done = CentreControlPoints(new Vector3[] { cA, m1, m2, cB }, s, lift, waterRight, Q);
                     }
                 }
             }
 
-            // the corner directions point into their own segment; along the bridge they point the other way
-            Vector3 l1, l2, r1, r2;
-            NetSegment.CalculateMiddlePoints(aL, -daL, bL, -dbL, false, false, out l1, out l2);
-            NetSegment.CalculateMiddlePoints(aR, -daR, bR, -dbR, false, false, out r1, out r2);
+            if (!done)
+            {
+                // the corner directions point into their own segment; along the bridge they point the other way
+                Vector3 l1, l2, r1, r2;
+                NetSegment.CalculateMiddlePoints(aL, -daL, bL, -dbL, true, true, out l1, out l2);
+                NetSegment.CalculateMiddlePoints(aR, -daR, bR, -dbR, true, true, out r1, out r2);
+                Vector3[] left = { aL, l1, l2, bL };
+                Vector3[] right = { aR, r1, r2, bR };
+                if (!BlendControlPoints(left, right, s, lift, waterRight, Q)) return false;
+            }
 
-            Vector3[] left = { aL, l1, l2, bL };
-            Vector3[] right = { aR, r1, r2, bR };
-            return BlendControlPoints(left, right, s, lift, waterRight, Q);
+            // the ends are the real end points of the two lines
+            Vector3 own = atOwnStart ? P[0] : P[3];
+            Vector3 nb = nbAtStart ? N[0] : N[3];
+            Vector3 hOwn = atOwnStart ? P[0] - P[1] : P[3] - P[2]; // direction of the own line toward the node
+            Vector3 hNb = nbAtStart ? N[0] - N[1] : N[3] - N[2];   // direction of the neighbour's line toward the node
+            hOwn.y = 0f;
+            hNb.y = 0f;
+            if (atOwnStart)
+            {
+                Q[0] = nb;
+                Q[3] = own;
+                Q[1] = Q[0] + Turn(Q[1] - Q[0], hNb);
+                Q[2] = Q[3] + Turn(Q[2] - Q[3], hOwn);
+            }
+            else
+            {
+                Q[0] = own;
+                Q[3] = nb;
+                Q[1] = Q[0] + Turn(Q[1] - Q[0], hOwn);
+                Q[2] = Q[3] + Turn(Q[2] - Q[3], hNb);
+            }
+            for (int i = 0; i < 4; i++)
+            {
+                if (!Finite(Q[i])) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// The handle vector h of the bridge at one end turned (in the horizontal plane) to the direction the line of the
+        /// segment arrives from / leaves in; the length and the height part stay. dir points from the segment toward the node.
+        /// At the end that is entered from the segment the handle points back toward the segment, so the sign is chosen to
+        /// keep the handle on the side it was.
+        /// </summary>
+        private static Vector3 Turn(Vector3 h, Vector3 dir)
+        {
+            Vector2 flat = new Vector2(h.x, h.z);
+            float len = flat.magnitude;
+            if (dir.sqrMagnitude < 1e-6f || len < 0.05f) return h; // nothing to turn
+            Vector2 d = new Vector2(dir.x, dir.z).normalized;
+            // only small corrections (the two edges of the node have slightly different handles): a large angle is real node geometry
+            if (Vector2.Dot(flat / len, d) < 0.8f) return h;
+            return new Vector3(d.x * len, h.y, d.y * len);
         }
 
         /// <summary>Samples the bridge curve Q (positions and left directions), including both ends.</summary>
@@ -492,6 +590,29 @@ namespace QuayTools
 
             float[] dist = new float[pos.Count];
             for (int i = 1; i < dist.Length; i++) dist[i] = dist[i - 1] + (pos[i] - pos[i - 1]).magnitude;
+
+            Vector3[] edgeCubic = path.Cubics.Count > 0 ? path.Cubics[0] : null;
+            path.Cubics.Clear();
+            path.CubicFrom.Clear();
+            path.CubicTo.Clear();
+            if (Qs != null)
+            {
+                path.Cubics.Add(Qs);
+                path.CubicFrom.Add(0f);
+                path.CubicTo.Add(dist[startCount]);
+            }
+            if (edgeCubic != null)
+            {
+                path.Cubics.Add(edgeCubic);
+                path.CubicFrom.Add(Qs != null ? dist[startCount] : 0f);
+                path.CubicTo.Add(dist[endIndex]);
+            }
+            if (Qe != null)
+            {
+                path.Cubics.Add(Qe);
+                path.CubicFrom.Add(dist[endIndex]);
+                path.CubicTo.Add(dist[dist.Length - 1]);
+            }
 
             path.Pos = pos.ToArray();
             path.Left = left.ToArray();
@@ -578,24 +699,43 @@ namespace QuayTools
                     if (item.BridgeStart == 2)
                     {
                         Vector3[] q = new Vector3[4];
-                        if (BridgeControlPoints(id, seg.m_startNode, true, c, item.Settings, lift, waterRight, q) &&
+                        if (BridgeControlPoints(id, seg.m_startNode, true, c, item.Settings, lift, waterRight, P, q) &&
                             new Vector2(q[0].x - q[3].x, q[0].z - q[3].z).magnitude > 0.05f) Qs = q;
                     }
                     if (item.BridgeEnd == 2)
                     {
                         Vector3[] q = new Vector3[4];
-                        if (BridgeControlPoints(id, seg.m_endNode, false, c, item.Settings, lift, waterRight, q) &&
+                        if (BridgeControlPoints(id, seg.m_endNode, false, c, item.Settings, lift, waterRight, P, q) &&
                             new Vector2(q[0].x - q[3].x, q[0].z - q[3].z).magnitude > 0.05f) Qe = q;
                     }
                     ExtendCurve(path, Qs, Qe);
                 }
 
+                // start / end trim (the path is shortened like the lines of the other tools)
+                path = TrimPath(path, Mathf.Max(0f, -item.Settings.StartShift) * FenceStore.Unit, path.Length - Mathf.Max(0f, -item.Settings.EndShift) * FenceStore.Unit);
+
                 float width = Mathf.Clamp(item.Settings.Width, DecalStore.MinWidth, DecalStore.MaxWidth) * FenceStore.Unit;
 
-                item.Placed = prop != null && !item.Settings.Strip;
+                // a decal path without a texture is placed with a stand-in decal (a game decal prop with the theme pavement texture)
+                PropInfo placeProp = prop;
+                item.PlaceMat = null;
+                if (prop == null && !item.Settings.Strip)
+                {
+                    PropInfo stand = FindStandInDecal();
+                    Material standMat = stand != null ? GetStandInMaterial(stand) : null;
+                    if (standMat != null)
+                    {
+                        placeProp = stand;
+                        item.PlaceMat = standMat;
+                    }
+                }
+                item.PlaceProp = placeProp;
+
+                item.Placed = placeProp != null && !item.Settings.Strip;
                 if (item.Placed)
                 {
-                    item.Tiles = BuildTiles(path, width, item.Settings.Scale * FenceStore.Unit, item.Settings.Step * FenceStore.Unit, item.Settings.Box * FenceStore.Unit, prop);
+                    prop = placeProp;
+                    item.Tiles = BuildTiles(path, width, item.Settings.Scale * FenceStore.Unit, item.Settings.Step * FenceStore.Unit, item.Settings.Box * FenceStore.Unit, prop, item.Settings.ShiftX * FenceStore.Unit);
                     if (item.Mesh != null) item.Mesh.Clear();
                     if (_diagnostics < 8 || !item.Logged)
                     {
@@ -618,9 +758,10 @@ namespace QuayTools
                     item.Mesh.Clear();
                 }
 
-                MeshData data = prop != null
-                    ? BuildTextured(path, width, item.Settings.Scale * FenceStore.Unit, prop)
-                    : BuildSolid(path, width);
+                MeshData data;
+                if (prop != null) data = BuildTextured(path, width, item.Settings.Scale * FenceStore.Unit, prop, item.Settings.ShiftX * FenceStore.Unit);
+                else if (GetPavementTexture() != null) data = BuildSolid(path, width, item.Settings.Scale * FenceStore.Unit, item.Settings.ShiftX * FenceStore.Unit);
+                else data = BuildSolid(path, width, 0f, 0f);
 
                 item.Mesh.vertices = data.Vertices.ToArray();
                 item.Mesh.uv = data.Uv.ToArray();
@@ -656,6 +797,11 @@ namespace QuayTools
             public Vector3[] Left;
             public float[] Dist;
             public float Length;
+            // the exact cubics the path is made of (bridge at the start, the edge curve, bridge at the end) and the path
+            // distances they cover: used where the sampled polyline is not precise enough (network-model lines)
+            public readonly List<Vector3[]> Cubics = new List<Vector3[]>();
+            public readonly List<float> CubicFrom = new List<float>();
+            public readonly List<float> CubicTo = new List<float>();
             public float BridgeStartLen = -1f;              // path length of the bridged gap at the start (-1: none)
             public float BridgeEndFrom = float.MaxValue;    // path distance where the bridged gap at the end begins
             private int _cursor;
@@ -681,6 +827,51 @@ namespace QuayTools
                 if (left.sqrMagnitude > 1e-8f) left.Normalize();
                 else left = Left[_cursor];
             }
+        }
+
+        /// <summary>The part [d0, d1] of a path (distances from its start).</summary>
+        internal static Path TrimPath(Path src, float d0, float d1)
+        {
+            float len = src.Length;
+            d0 = Mathf.Clamp(d0, 0f, len);
+            d1 = Mathf.Clamp(d1, 0f, len);
+            if (d1 - d0 < 0.3f)
+            {
+                float mid = Mathf.Clamp((d0 + d1) * 0.5f, 0.15f, Mathf.Max(len - 0.15f, 0.15f));
+                d0 = Mathf.Max(0f, mid - 0.15f);
+                d1 = Mathf.Min(len, mid + 0.15f);
+            }
+            if (d0 <= 0.001f && d1 >= len - 0.001f) return src;
+
+            List<Vector3> pos = new List<Vector3>();
+            List<Vector3> left = new List<Vector3>();
+            Vector3 p, l;
+            src.ResetCursor();
+            src.Eval(d0, out p, out l);
+            pos.Add(p);
+            left.Add(l);
+            for (int i = 0; i < src.Pos.Length; i++)
+            {
+                if (src.Dist[i] > d0 + 0.05f && src.Dist[i] < d1 - 0.05f)
+                {
+                    pos.Add(src.Pos[i]);
+                    left.Add(src.Left[i]);
+                }
+            }
+            src.ResetCursor();
+            src.Eval(d1, out p, out l);
+            pos.Add(p);
+            left.Add(l);
+
+            Path path = new Path();
+            path.Pos = pos.ToArray();
+            path.Left = left.ToArray();
+            path.Dist = new float[pos.Count];
+            for (int i = 1; i < pos.Count; i++) path.Dist[i] = path.Dist[i - 1] + (pos[i] - pos[i - 1]).magnitude;
+            path.Length = Mathf.Max(path.Dist[pos.Count - 1], 0.01f);
+            path.BridgeStartLen = src.BridgeStartLen >= 0f ? src.BridgeStartLen - d0 : -1f;
+            path.BridgeEndFrom = src.BridgeEndFrom - d0;
+            return path;
         }
 
         /// <summary>Derivative of the cubic Bezier curve with control points P at parameter u.</summary>
@@ -722,6 +913,9 @@ namespace QuayTools
                 path.Dist[i] = i == 0 ? 0f : path.Dist[i - 1] + (path.Pos[i] - path.Pos[i - 1]).magnitude;
             }
             path.Length = Mathf.Max(path.Dist[n], 0.01f);
+            path.Cubics.Add(new Vector3[] { P[0], P[1], P[2], P[3] });
+            path.CubicFrom.Add(0f);
+            path.CubicTo.Add(path.Length);
             return path;
         }
 
@@ -759,7 +953,8 @@ namespace QuayTools
             }
         }
 
-        private static MeshData BuildSolid(Path path, float width)
+        /// <summary>The strip as one mesh. With tile &gt; 0 the texture coordinates run in metres / tile (a texture that repeats), otherwise 0..1 across.</summary>
+        private static MeshData BuildSolid(Path path, float width, float tile, float shift)
         {
             MeshData m = new MeshData();
             int n = Mathf.Clamp(Mathf.CeilToInt(path.Length / 1.5f), 4, 120);
@@ -771,8 +966,16 @@ namespace QuayTools
                 float d = path.Length * i / n;
                 Vector3 pos, left;
                 path.Eval(d, out pos, out left);
-                AddVertex(m, pos + left * half, -left, 0f, d);
-                AddVertex(m, pos - left * half, -left, 1f, d);
+                if (tile > 0.01f)
+                {
+                    AddVertex(m, pos + left * half, -left, half / tile, (d - shift) / tile);
+                    AddVertex(m, pos - left * half, -left, -half / tile, (d - shift) / tile);
+                }
+                else
+                {
+                    AddVertex(m, pos + left * half, -left, 0f, d);
+                    AddVertex(m, pos - left * half, -left, 1f, d);
+                }
             }
             AddQuadStrip(m, 0, n + 1);
             return m;
@@ -783,7 +986,7 @@ namespace QuayTools
         /// the middle of the strip and starts at the segment start, and the strip edges crop the texture. Every tile
         /// piece has its own vertices with UV inside 0..1, so textures that do not repeat (clamped) work as well.
         /// </summary>
-        private static MeshData BuildTextured(Path path, float width, float tile, PropInfo prop)
+        private static MeshData BuildTextured(Path path, float width, float tile, PropInfo prop, float shift)
         {
             Vector3 size = prop.m_mesh.bounds.size;
             float aspect = size.x > 0.01f && size.z > 0.01f ? size.z / size.x : 1f;
@@ -821,10 +1024,12 @@ namespace QuayTools
                 float ua = (xa - centre) / tile + 0.5f;
                 float ub = (xb - centre) / tile + 0.5f;
 
-                for (int r = 0; r < rows; r++)
+                float off = Mathf.Repeat(shift, tl); // the tile grid slides along the path, the ends stay
+                for (int r = 0; r <= rows; r++)
                 {
-                    float d0 = r * tl;
-                    float d1 = Mathf.Min(len, d0 + tl);
+                    float b0 = off + (r - 1) * tl;
+                    float d0 = Mathf.Max(0f, b0);
+                    float d1 = Mathf.Min(len, b0 + tl);
                     if (d1 - d0 < 1e-4f) continue;
 
                     int k = Mathf.Clamp(Mathf.CeilToInt((d1 - d0) / SampleStep), 1, steps);
@@ -833,7 +1038,7 @@ namespace QuayTools
                     for (int s = 0; s <= k; s++)
                     {
                         float d = d0 + (d1 - d0) * s / k;
-                        float v = (d - d0) / tl;
+                        float v = (d - b0) / tl;
                         Vector3 pos, left;
                         path.Eval(d, out pos, out left);
                         AddVertex(m, pos - left * xa, -left, ua, v); // x is right positive, left points to the left
@@ -850,7 +1055,7 @@ namespace QuayTools
         /// prop instance (the game's decal shader projects the texture onto whatever is inside the tile's box, so heights,
         /// slopes and node edits are followed by the surface itself). No mask cropping: the footprint is the tile grid.
         /// </summary>
-        private static List<Matrix4x4> BuildTiles(Path path, float width, float tile, float step, float boxHeight, PropInfo prop)
+        private static List<Matrix4x4> BuildTiles(Path path, float width, float tile, float step, float boxHeight, PropInfo prop, float shift)
         {
             Bounds b = prop.m_mesh.bounds;
             Vector3 size = b.size;
@@ -880,16 +1085,19 @@ namespace QuayTools
 
             List<Matrix4x4> tiles = new List<Matrix4x4>(cols * rows);
             path.ResetCursor();
-            for (int r = 0; r < rows; r++)
+            float off = Mathf.Repeat(shift, spacing); // the tiles slide along the path, the ends stay
+            for (int r = -1; r < rows; r++)
             {
+                float centreD = (r + 0.5f) * spacing + off;
+                if (centreD + tileL * 0.5f < 0.01f || centreD - tileL * 0.5f > len - 0.01f) continue;
                 Vector3 pos, left;
-                path.Eval((r + 0.5f) * spacing, out pos, out left);
+                path.Eval(Mathf.Clamp(centreD, 0f, len), out pos, out left);
                 Vector3 fwd = Vector3.Cross(Vector3.up, left);
                 if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
                 Quaternion rot = Quaternion.LookRotation(fwd, Vector3.up);
 
                 // over a bridged gap the real surface height is not known exactly: use a much taller projection box
-                float dc = (r + 0.5f) * spacing;
+                float dc = centreD;
                 bool inGap = dc < path.BridgeStartLen + tileL * 0.5f || dc > path.BridgeEndFrom - tileL * 0.5f;
                 Vector3 scale = new Vector3(sx, inGap ? syBridge : sy, sz);
 
@@ -917,10 +1125,11 @@ namespace QuayTools
 
                 Color tint = item.Settings.TintColor;
 
-                if (item.Prop != null && item.Placed)
+                if (item.Placed && item.PlaceProp != null)
                 {
-                    PropInfo info = item.Prop;
-                    if (item.Tiles == null || info.m_material == null || info.m_mesh == null) continue;
+                    PropInfo info = item.PlaceProp;
+                    Material mat = item.PlaceMat != null ? item.PlaceMat : info.m_material;
+                    if (item.Tiles == null || mat == null || info.m_mesh == null) continue;
                     if (pm == null) pm = Singleton<PropManager>.instance;
 
                     // the same call and material parameters the game uses for a decal prop instance
@@ -929,12 +1138,12 @@ namespace QuayTools
                     _block.SetVector(pm.ID_ObjectIndex, RenderManager.DefaultColorLocation);
                     if (info.m_rollLocation != null)
                     {
-                        info.m_material.SetVectorArray(pm.ID_RollLocation, info.m_rollLocation);
-                        info.m_material.SetVectorArray(pm.ID_RollParams, info.m_rollParams);
+                        mat.SetVectorArray(pm.ID_RollLocation, info.m_rollLocation);
+                        mat.SetVectorArray(pm.ID_RollParams, info.m_rollParams);
                     }
                     for (int k = 0; k < item.Tiles.Count; k++)
                     {
-                        Graphics.DrawMesh(info.m_mesh, item.Tiles[k], info.m_material, info.m_prefabDataLayer, null, 0, _block);
+                        Graphics.DrawMesh(info.m_mesh, item.Tiles[k], mat, info.m_prefabDataLayer, null, 0, _block);
                     }
                     continue;
                 }
@@ -955,6 +1164,19 @@ namespace QuayTools
                 }
                 else
                 {
+                    if (GetPavementTexture() != null)
+                    {
+                        Material pav = receive && tint.a >= 0.99f ? GetPavementLit() : null;
+                        if (pav == null) pav = GetPavementUnlit();
+                        if (pav != null)
+                        {
+                            _block.Clear();
+                            _block.SetColor("_Color", tint);
+                            Graphics.DrawMesh(item.Mesh, Matrix4x4.identity, pav, 0, null, 0, _block, false, receive);
+                            continue;
+                        }
+                    }
+
                     Material m = receive && tint.a >= 0.99f ? GetLitPlainMaterial() : null;
                     if (m == null) m = GetPlainMaterial();
                     if (m == null) continue; // no usable shader, already logged
@@ -1053,6 +1275,8 @@ namespace QuayTools
                 // the option was changed: start again with the other kind of shader
                 if (_plain != null) Destroy(_plain);
                 _plain = null;
+                if (_pavUnlit != null) Destroy(_pavUnlit);
+                _pavUnlit = null;
                 foreach (KeyValuePair<PropInfo, Material> kv in _simple)
                 {
                     if (kv.Value != null) Destroy(kv.Value);
@@ -1208,6 +1432,149 @@ namespace QuayTools
                 Debug.LogWarning("[QuayTools] Could not compose the texture of decal '" + info.name + "', using the plain main texture: " + ex.Message);
                 return null;
             }
+        }
+
+        /// <summary>
+        /// The theme pavement texture of the game (the pavement of pedestrian paths): the base of a path without a decal, tinted by
+        /// the path colour. Copied once into an opaque repeating texture. Null when it cannot be found.
+        /// </summary>
+        private Texture2D GetPavementTexture()
+        {
+            if (_pavement != null) return _pavement;
+            if (_pavementSearched) return null;
+            _pavementSearched = true;
+
+            try
+            {
+                Texture source = null;
+                BindingFlags all = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                FieldInfo propsField = typeof(TerrainManager).GetField("m_properties", all);
+                object props = propsField != null ? propsField.GetValue(Singleton<TerrainManager>.instance) : null;
+                if (props != null)
+                {
+                    FieldInfo tex = props.GetType().GetField("m_pavementDiffuse", all);
+                    if (tex != null) source = tex.GetValue(props) as Texture;
+                }
+                if (source == null) source = Shader.GetGlobalTexture("_TerrainPavementDiffuse");
+                if (source == null)
+                {
+                    Debug.LogWarning("[QuayTools] The theme pavement texture was not found: paths without a decal are plain colour");
+                    return null;
+                }
+
+                int w = Mathf.Clamp(source.width, 4, 1024), h = Mathf.Clamp(source.height, 4, 1024);
+                Texture2D tm = ReadBack(source, w, h);
+                Color32[] px = tm.GetPixels32();
+                Destroy(tm);
+                for (int i = 0; i < px.Length; i++) px[i].a = 255;
+
+                Texture2D t2 = new Texture2D(w, h, TextureFormat.RGBA32, true);
+                t2.name = "QuayTools pavement";
+                t2.SetPixels32(px);
+                t2.Apply(true);
+                t2.wrapMode = TextureWrapMode.Repeat;
+                t2.filterMode = FilterMode.Trilinear;
+                t2.anisoLevel = 4;
+                _pavement = t2;
+                Debug.Log("[QuayTools] Theme pavement texture " + source.name + " (" + source.width + "x" + source.height + "), natural size " + _pavementTile.ToString("0.0") + " m");
+                return _pavement;
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning("[QuayTools] Could not read the theme pavement texture: " + ex.Message);
+                return null;
+            }
+        }
+
+        private PropInfo _standIn;
+        private Material _standInMat;
+        private Texture2D _white;
+
+        /// <summary>A game decal prop whose mesh and shader serve as the stand-in decal of a path without a texture (the theme pavement is not a decal).</summary>
+        private PropInfo FindStandInDecal()
+        {
+            if (_standIn != null) return _standIn;
+            List<DecalEntry> list = DecalCatalog.Entries;
+            for (int i = 0; i < list.Count; i++)
+            {
+                PropInfo p = list[i].Info;
+                if (p != null && p.m_mesh != null && p.m_material != null && p.m_material.HasProperty("_MainTex"))
+                {
+                    _standIn = p;
+                    Debug.Log("[QuayTools] Stand-in decal for paths without a texture: " + p.name + ", shader " + p.m_material.shader.name);
+                    return p;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>The stand-in decal's material with the pavement texture as colours and a fully opaque mask.</summary>
+        private Material GetStandInMaterial(PropInfo info)
+        {
+            if (_standInMat != null) return _standInMat;
+            Texture2D pav = GetPavementTexture();
+            if (pav == null) return null;
+
+            try
+            {
+                if (_white == null)
+                {
+                    _white = new Texture2D(4, 4, TextureFormat.RGBA32, false);
+                    Color32[] px = new Color32[16];
+                    for (int i = 0; i < px.Length; i++) px[i] = new Color32(255, 255, 255, 255);
+                    _white.SetPixels32(px);
+                    _white.Apply(false);
+                    _white.wrapMode = TextureWrapMode.Clamp;
+                }
+
+                Material m = new Material(info.m_material);
+                m.SetTexture("_MainTex", pav);
+                if (m.HasProperty("_ACIMap")) m.SetTexture("_ACIMap", _white); // opacity from the R channel
+                _standInMat = m;
+                return m;
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning("[QuayTools] Could not make the stand-in decal material: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>Metres covered by one repeat of the theme pavement texture (the default tile size of a path without a decal).</summary>
+        internal static float PavementTileMetres()
+        {
+            DecalRenderer r = Instance;
+            if (r == null) return 8f;
+            r.GetPavementTexture();
+            return r._pavementTile;
+        }
+
+        private Material GetPavementUnlit()
+        {
+            if (_pavUnlit != null) return _pavUnlit;
+            Texture2D tex = GetPavementTexture();
+            if (tex == null || EnsureShader() == null) return null;
+
+            Material m = new Material(_shader);
+            m.mainTexture = tex;
+            m.renderQueue = 3000;
+            if (m.HasProperty("_Cull")) m.SetInt("_Cull", 0);
+            if (m.HasProperty("_ZWrite")) m.SetInt("_ZWrite", 0);
+            _pavUnlit = m;
+            return m;
+        }
+
+        private Material GetPavementLit()
+        {
+            if (_pavLit != null) return _pavLit;
+            Texture2D tex = GetPavementTexture();
+            if (tex == null || FindLitOpaque() == null) return null;
+
+            Material m = new Material(_litShader);
+            m.mainTexture = tex;
+            m.renderQueue = 2001;
+            _pavLit = m;
+            return m;
         }
 
         /// <summary>One material for all plain strips; the colour (with opacity) comes per draw through _Color.</summary>

@@ -12,6 +12,7 @@ namespace QuayTools
         private const string PropKey = "QuayTools.PropLines";
         private const string LockKey = "QuayTools.Locks";
         private const string PedKey = "QuayTools.NoPeds";
+        private const string HideKey = "QuayTools.HideProps";
 
         public override void OnLoadData()
         {
@@ -40,6 +41,7 @@ namespace QuayTools
             byte[] locks = serializableDataManager.LoadData(LockKey);
             LockStore.Load(locks);
             PedStore.Load(serializableDataManager.LoadData(PedKey));
+            HideStore.Load(serializableDataManager.LoadData(HideKey));
             Debug.Log("[QuayTools] Loaded segment locks (" + (locks == null ? 0 : locks.Length) + " bytes)");
         }
 
@@ -50,6 +52,7 @@ namespace QuayTools
             serializableDataManager.SaveData(PropKey, PropLineStore.Save());
             serializableDataManager.SaveData(LockKey, LockStore.Save());
             serializableDataManager.SaveData(PedKey, PedStore.Save());
+            serializableDataManager.SaveData(HideKey, HideStore.Save());
         }
     }
 }
