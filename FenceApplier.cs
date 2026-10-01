@@ -149,7 +149,9 @@ namespace QuayTools
             Run(segments, null, delegate (ushort id)
             {
                 PedStore.SetBlocked(id, blocked);
+                if (blocked) PedestrianPathPatch.QueueRepath(id);
             }, blocked ? "nop_done" : "nop_undone", report, true);
+            if (blocked) Singleton<SimulationManager>.instance.AddAction(PedestrianPathPatch.RepathPending);
         }
 
         // ---------- prop lines ----------

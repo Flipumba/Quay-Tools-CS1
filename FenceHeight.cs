@@ -17,12 +17,12 @@ namespace QuayTools
         private const int Size = 128;
         private const float MaxHeight = 1024f;
 
-        /// <summary>Texture keys of a segment: segment * KeysPerSegment + line * 4 + part (0 = the line, 1 = closing piece at the start, 2 = at the end).</summary>
-        public const int KeysPerSegment = 64;
+        /// <summary>Texture keys of a segment: segment * KeysPerSegment + line * 64 + part (0..59 = pieces of the line, 60 = closing piece at the start, 61 = at the end).</summary>
+        public const int KeysPerSegment = 1024;
 
         public static int Key(ushort segment, int line, int part)
         {
-            return segment * KeysPerSegment + (line & 15) * 4 + part;
+            return segment * KeysPerSegment + (line & 15) * 64 + (part & 63);
         }
 
         private static readonly Dictionary<int, Texture2D> Textures = new Dictionary<int, Texture2D>();

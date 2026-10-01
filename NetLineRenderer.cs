@@ -21,6 +21,10 @@ namespace QuayTools
         private const int MaxBuildsPerFrame = 6;
         private const int ChecksPerFrame = 6;
         private const float MaxDistance = 3500f;
+        private const float PieceLength = 6f;   // metres: longest piece of a line
+        private const int MaxPieces = 58;
+        private const int CapStartPart = 60;
+        private const int CapEndPart = 61;
 
         private const int TurnAroundRight = 512; // NetSegment.m_flags2 bit read by RenderSegments for a positive wOffset
 
@@ -263,19 +267,29 @@ namespace QuayTools
                 d1 = mid + 0.15f;
             }
 
-            Vector3[] Q = MakeCurve(path, d0, d1);
             bool rotated = line.Flip ^ waterRight; // false: the model faces the water side
-            Part part = MakeRibbon(id, index, 0, Q, fence, hw, rotated, 1f, true);
-            if (part != null) item.Parts.Add(part);
+
+            // One cubic cannot follow a bend, an S-curve or the heights of a long quay (nor the bridged gaps at the nodes),
+            // so the line is cut into short pieces, each fitted to the sampled path with the path's own directions
+            // at its ends (the game's matrices keep the texture continuous from piece to piece).
+            int pieces = Mathf.Clamp(Mathf.CeilToInt((d1 - d0) / PieceLength), 1, MaxPieces);
+            for (int i = 0; i < pieces; i++)
+            {
+                float a = d0 + (d1 - d0) * i / pieces;
+                float b = d0 + (d1 - d0) * (i + 1) / pieces;
+                Vector3[] Q = MakeCurve(path, a, b, len);
+                Part part = MakeRibbon(id, index, i, Q, fence, hw, rotated, 1f, true);
+                if (part != null) item.Parts.Add(part);
+            }
 
             if (line.CapStart && cornersOk)
             {
-                Part cap = MakeCap(id, index, 1, c, true, fence, hw, lift);
+                Part cap = MakeCap(id, index, CapStartPart, c, true, fence, hw, lift);
                 if (cap != null) item.Parts.Add(cap);
             }
             if (line.CapEnd && cornersOk)
             {
-                Part cap = MakeCap(id, index, 2, c, false, fence, hw, lift);
+                Part cap = MakeCap(id, index, CapEndPart, c, false, fence, hw, lift);
                 if (cap != null) item.Parts.Add(cap);
             }
 
@@ -287,19 +301,28 @@ namespace QuayTools
             }
         }
 
-        /// <summary>One cubic through the part [d0, d1] of the sampled path, with the end directions of the path.</summary>
-        private static Vector3[] MakeCurve(DecalRenderer.Path path, float d0, float d1)
+        /// <summary>One cubic through the part [d0, d1] of the sampled path; the end directions are the path's own (central differences, so neighbouring pieces meet smoothly).</summary>
+        private static Vector3[] MakeCurve(DecalRenderer.Path path, float d0, float d1, float len)
         {
-            float e = Mathf.Min(0.5f, (d1 - d0) * 0.25f);
-            Vector3 p0, p0b, p3a, p3, l;
-            path.ResetCursor();
-            path.Eval(d0, out p0, out l);
-            path.Eval(d0 + e, out p0b, out l);
-            path.Eval(d1 - e, out p3a, out l);
-            path.Eval(d1, out p3, out l);
+            const float Step = 0.75f;
+            Vector3 p0, p3, l;
+            Vector3 u0, u1, v0, v1;
 
-            Vector3 dirA = p0b - p0, dirB = p3 - p3a;
-            dirA = dirA.sqrMagnitude > 1e-8f ? dirA.normalized : Vector3.forward;
+            path.ResetCursor();
+            path.Eval(Mathf.Max(0f, d0 - Step), out u0, out l);
+            path.Eval(d0, out p0, out l);
+            path.Eval(Mathf.Min(len, d0 + Step), out u1, out l);
+            Vector3 dirA = u1 - u0;
+
+            path.ResetCursor();
+            path.Eval(Mathf.Max(0f, d1 - Step), out v0, out l);
+            path.Eval(d1, out p3, out l);
+            path.Eval(Mathf.Min(len, d1 + Step), out v1, out l);
+            Vector3 dirB = v1 - v0;
+
+            dirA = dirA.sqrMagnitude > 1e-8f ? dirA.normalized : (p3 - p0);
+            if (dirA.sqrMagnitude < 1e-8f) dirA = Vector3.forward;
+            dirA.Normalize();
             dirB = dirB.sqrMagnitude > 1e-8f ? dirB.normalized : dirA;
 
             Vector3 m1, m2;

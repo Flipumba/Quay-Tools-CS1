@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using ColossalFramework;
 using HarmonyLib;
 using UnityEngine;
 
@@ -153,7 +154,91 @@ namespace QuayTools
             Func<object, int> getter;
             if (pathFind == null || !_getters.TryGetValue(pathFind.GetType(), out getter) || getter == null) return false;
             int lanes = getter(pathFind);
-            return (lanes & PedestrianLane) != 0 && (lanes & VehicleLane) == 0;
+            bool skip = (lanes & PedestrianLane) != 0 && (lanes & VehicleLane) == 0;
+            if (_diag < 12)
+            {
+                _diag++;
+                Debug.Log("[QuayTools] Pedestrian block check: segment " + segment + ", lane types " + lanes + (skip ? " -> skipped" : " -> allowed (not a walking path)"));
+            }
+            return skip;
+        }
+
+        private static int _diag;
+
+        // ---------- sending citizens that already walk over a blocked segment on their way again ----------
+
+        private static readonly HashSet<ushort> Pending = new HashSet<ushort>();
+        private static MethodInfo _invalidPath;
+
+        /// <summary>Remembers a newly blocked segment; <see cref="RepathPending"/> (simulation thread) then re-routes walkers whose saved path crosses it.</summary>
+        public static void QueueRepath(ushort segment)
+        {
+            lock (Pending) Pending.Add(segment);
+        }
+
+        private static bool PathUses(uint path, HashSet<ushort> segments, PathUnit[] units)
+        {
+            int guard = 0;
+            while (path != 0 && guard++ < 64)
+            {
+                int count = units[path].m_positionCount;
+                for (int i = 0; i < count; i++)
+                {
+                    PathUnit.Position pos;
+                    if (units[path].GetPosition(i, out pos) && segments.Contains(pos.m_segment)) return true;
+                }
+                path = units[path].m_nextPathUnit;
+            }
+            return false;
+        }
+
+        /// <summary>Simulation thread only. Walkers whose path crosses a newly blocked segment get a new path (the game's own InvalidPath: release the path and search again).</summary>
+        public static void RepathPending()
+        {
+            HashSet<ushort> segments;
+            lock (Pending)
+            {
+                if (Pending.Count == 0) return;
+                segments = new HashSet<ushort>(Pending);
+                Pending.Clear();
+            }
+
+            try
+            {
+                if (_invalidPath == null)
+                {
+                    _invalidPath = typeof(CitizenAI).GetMethod("InvalidPath", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                        null, new Type[] { typeof(ushort), typeof(CitizenInstance).MakeByRefType() }, null);
+                }
+                if (_invalidPath == null)
+                {
+                    Debug.LogWarning("[QuayTools] CitizenAI.InvalidPath not found: citizens already walking keep their old paths");
+                    return;
+                }
+
+                CitizenInstance[] buf = Singleton<CitizenManager>.instance.m_instances.m_buffer;
+                PathUnit[] units = Singleton<PathManager>.instance.m_pathUnits.m_buffer;
+                int changed = 0;
+                for (int id = 1; id < buf.Length; id++)
+                {
+                    CitizenInstance.Flags f = buf[id].m_flags;
+                    if ((f & CitizenInstance.Flags.Created) == CitizenInstance.Flags.None || (f & CitizenInstance.Flags.WaitingPath) != CitizenInstance.Flags.None) continue;
+                    if (buf[id].m_path == 0 || !PathUses(buf[id].m_path, segments, units)) continue;
+
+                    CitizenInfo info = buf[id].Info;
+                    if (info == null || info.m_citizenAI == null) continue;
+
+                    object[] args = new object[] { (ushort)id, buf[id] };
+                    _invalidPath.Invoke(info.m_citizenAI, args);
+                    buf[id] = (CitizenInstance)args[1];
+                    changed++;
+                }
+                Debug.Log("[QuayTools] Pedestrian block: " + changed + " walking citizen(s) got a new path");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[QuayTools] Re-routing walkers failed: " + ex);
+            }
         }
 
         // one prefix per parameter position of the segment id (the parameter is read by position)
@@ -167,6 +252,12 @@ namespace QuayTools
         public static bool P7(object __instance, ushort __7) { return !Skip(__instance, __7); }
         public static bool P8(object __instance, ushort __8) { return !Skip(__instance, __8); }
         public static bool P9(object __instance, ushort __9) { return !Skip(__instance, __9); }
+        public static bool P10(object __instance, ushort __10) { return !Skip(__instance, __10); }
+        public static bool P11(object __instance, ushort __11) { return !Skip(__instance, __11); }
+        public static bool P12(object __instance, ushort __12) { return !Skip(__instance, __12); }
+        public static bool P13(object __instance, ushort __13) { return !Skip(__instance, __13); }
+        public static bool P14(object __instance, ushort __14) { return !Skip(__instance, __14); }
+        public static bool P15(object __instance, ushort __15) { return !Skip(__instance, __15); }
 
         // the same for methods that return bool (ProcessItemCosts returns false when a segment is not usable)
         public static bool B0(object __instance, ushort __0, ref bool __result)
@@ -226,6 +317,42 @@ namespace QuayTools
         public static bool B9(object __instance, ushort __9, ref bool __result)
         {
             if (!Skip(__instance, __9)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B10(object __instance, ushort __10, ref bool __result)
+        {
+            if (!Skip(__instance, __10)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B11(object __instance, ushort __11, ref bool __result)
+        {
+            if (!Skip(__instance, __11)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B12(object __instance, ushort __12, ref bool __result)
+        {
+            if (!Skip(__instance, __12)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B13(object __instance, ushort __13, ref bool __result)
+        {
+            if (!Skip(__instance, __13)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B14(object __instance, ushort __14, ref bool __result)
+        {
+            if (!Skip(__instance, __14)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B15(object __instance, ushort __15, ref bool __result)
+        {
+            if (!Skip(__instance, __15)) return true;
             __result = false; // the game's own "nothing to expand" result
             return false;
         }
@@ -304,7 +431,7 @@ namespace QuayTools
                         all2.Append(')');
 
                         bool isBool = m.ReturnType == typeof(bool);
-                        if (index < 0 || index > 9 || (m.ReturnType != typeof(void) && !isBool)) continue;
+                        if (index < 0 || index > 15 || (m.ReturnType != typeof(void) && !isBool)) continue;
                         if (Patched.Contains(m))
                         {
                             all2.Append("  <- already patched");

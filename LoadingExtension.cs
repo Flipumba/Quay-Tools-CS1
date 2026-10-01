@@ -23,6 +23,14 @@ namespace QuayTools
 
             HarmonySetup.ApplyLate();
 
+            // walkers whose saved path crosses a blocked segment are sent on their way again
+            System.Collections.Generic.List<ushort> blocked = PedStore.Snapshot();
+            if (blocked.Count > 0)
+            {
+                for (int i = 0; i < blocked.Count; i++) PedestrianPathPatch.QueueRepath(blocked[i]);
+                ColossalFramework.Singleton<SimulationManager>.instance.AddAction(PedestrianPathPatch.RepathPending);
+            }
+
             try
             {
                 Bootstrap.Init();
