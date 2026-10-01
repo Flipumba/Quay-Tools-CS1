@@ -30,6 +30,7 @@ namespace QuayTools
         public int Box = DefaultBox;     // height (thickness) of the projection box of placed decals, units of 0.1 m
         public bool Strip;               // plane mode: one textured strip with a composed texture instead of placed game decals (chosen when the path is added)
         public int StartShift, EndShift; // units of 0.1 m, -MaxShift..0: how much the path is shortened at that end
+        public int ColorMul;             // 0..10 (tenths): 0 = the tint works as the game applies it, 10 = the texture is fully multiplied by the colour (placed decals)
 
         public Color TintColor
         {
@@ -56,13 +57,14 @@ namespace QuayTools
             Scale = DefaultScale;
             Step = 0;
             Box = DefaultBox;
+            ColorMul = 0;
         }
 
         public bool SameAs(DecalSettings o)
         {
             return o != null && Width == o.Width && Lateral == o.Lateral && ShiftX == o.ShiftX && Lift == o.Lift && R == o.R && G == o.G && B == o.B && A == o.A &&
                    Scale == o.Scale && Step == o.Step && Box == o.Box && Prop == o.Prop && Strip == o.Strip &&
-                   StartShift == o.StartShift && EndShift == o.EndShift;
+                   StartShift == o.StartShift && EndShift == o.EndShift && ColorMul == o.ColorMul;
         }
     }
 
@@ -113,7 +115,7 @@ namespace QuayTools
             new Color32(20, 20, 20, 245)     // black
         };
 
-        private const int FormatVersion = 7;
+        private const int FormatVersion = 8;
         private static readonly Dictionary<ushort, DecalSet> Map = new Dictionary<ushort, DecalSet>();
 
         /// <summary>Raised (flag) whenever the content changes; the renderer rebuilds its meshes.</summary>
@@ -223,6 +225,7 @@ namespace QuayTools
                             w.Write(s.StartShift);
                             w.Write(s.EndShift);
                             w.Write(s.ShiftX);
+                            w.Write(s.ColorMul);
                         }
                     }
                 }
@@ -271,6 +274,7 @@ namespace QuayTools
                 s.EndShift = Mathf.Clamp(r.ReadInt32(), -MaxShift, 0);
             }
             if (version >= 7) s.ShiftX = Mathf.Clamp(r.ReadInt32(), -FenceStore.MaxUnits, FenceStore.MaxUnits);
+            if (version >= 8) s.ColorMul = Mathf.Clamp(r.ReadInt32(), 0, 10);
             return s;
         }
 

@@ -71,8 +71,8 @@ namespace QuayTools
             { "line_added",    new[] { "Line added on {0} segment(s)", "Линия добавлена на сегментах: {0}" } },
             { "line_removed",  new[] { "Line removed on {0} segment(s)", "Линия удалена на сегментах: {0}" } },
             { "line_cleared",  new[] { "Lines removed on {0} segment(s)", "Линии удалены на сегментах: {0}" } },
-            { "nstart", new[] { "Line start offset", "Смещение начала линии" } },
-            { "nend", new[] { "Line end offset", "Смещение конца линии" } },
+            { "nstart", new[] { "Line start", "Начало линии" } },
+            { "nend", new[] { "Line end", "Конец линии" } },
             { "nlateral", new[] { "Offset Y", "Смещение по Y" } },
             { "nlift", new[] { "Offset Z", "Смещение по Z" } },
             { "nscale", new[] { "Model width", "Ширина модели" } },
@@ -136,13 +136,35 @@ namespace QuayTools
             { "nothing_undo",  new[] { "Nothing to undo", "Нечего отменять" } },
             { "nothing_redo",  new[] { "Nothing to redo", "Нечего повторять" } },
             { "reset_done",    new[] { "Reset to defaults ({0} segment(s))", "Сброшено на значения по умолчанию (сегментов: {0})" } },
+            { "dcolormul", new[] { "Colour multiply", "Умножение цвета" } },
+            { "dcolormul_tip", new[] { "0: the tint works the way the game applies it (only where the decal allows a colour). 1: the texture is fully multiplied by the colour. Planes always multiply.", "0: оттенок работает так, как его применяет игра (только там, где декаль допускает цвет). 1: текстура полностью умножается на цвет. Плейн всегда умножает." } },
+            { "opt_lang", new[] { "Language / Язык", "Language / Язык" } },
+            { "opt_lang_auto", new[] { "Auto (game language) / Авто", "Auto (game language) / Авто" } },
+            { "opt_quickflip", new[] { "Enable quick-flip hotkey (Ctrl + key over a quay, no tool needed)", "Включить быстрый разворот (Ctrl + клавиша над набережной, инструмент не нужен)" } },
+            { "opt_hotkey", new[] { "Quick-flip hotkey", "Клавиша быстрого разворота" } },
+            { "opt_swap", new[] { "Swap land/water sides for fences (use only if fences go to the wrong side everywhere)", "Поменять местами сушу и воду для заборов (только если заборы везде уходят не на ту сторону)" } },
+            { "opt_undokeys", new[] { "Ctrl+Z / Ctrl+Y undo and redo while the Quay Tools window is open (turn off if it clashes with another undo mod)", "Отмена и повтор по Ctrl+Z / Ctrl+Y, пока открыто окно Quay Tools (выключите, если мешает другому моду)" } },
+            { "opt_shadows", new[] { "Texture-path strips receive shadows (lit shader; turn off for the unlit look if the colours look wrong)", "Дорожки Texture-path принимают тени (освещаемый шейдер; выключите, если цвета выглядят неправильно)" } },
+            { "opt_bridge", new[] { "Texture and prop paths: at sharp bends of nodes (Node Controller Renewal) bridge the gap along the centre line", "Дорожки и пропсы: на резких изгибах узлов (Node Controller Renewal) вести линию по центру промежутка" } },
+            { "opt_mark", new[] { "While the tool is active, highlight edited segments and show tool icons above them", "Пока инструмент активен, подсвечивать изменённые сегменты и показывать над ними значки инструментов" } },
+            { "opt_iconsize", new[] { "Size of the floating tool icons above edited segments", "Размер значков инструментов над изменёнными сегментами" } },
+            { "opt_icon1", new[] { "1 (small)", "1 (малый)" } },
+            { "opt_icon2", new[] { "2 (default)", "2 (по умолчанию)" } },
+            { "opt_icon3", new[] { "3 (large)", "3 (большой)" } },
+            { "opt_anynet", new[] { "Allow tools on any network segment (not only quays)", "Разрешить инструменты на любых сетевых сегментах (не только на набережных)" } },
+            { "tip_reset_value", new[] { "Double click: reset the value", "Двойной клик: сбросить значение" } },
+            { "tip_hex", new[] { "Colour #RRGGBB or #RRGGBBAA (hex)", "Цвет #RRGGBB или #RRGGBBAA (hex)" } },
             { "nothing",       new[] { "No quay under the cursor", "Под курсором нет набережной" } },
         };
 
+        /// <summary>Language of the mod interface: the choice in the mod options (0 = by the game language, 1 = English, 2 = Russian).</summary>
         public static bool IsRussian
         {
             get
             {
+                int choice = Settings.UiLanguage;
+                if (choice == 1) return false;
+                if (choice == 2) return true;
                 try
                 {
                     return LocaleManager.instance != null && LocaleManager.instance.language == "ru";
@@ -152,6 +174,12 @@ namespace QuayTools
                     return false;
                 }
             }
+        }
+
+        /// <summary>0 = English, 1 = Russian: changes when the language of the game or the option changes.</summary>
+        public static int Current
+        {
+            get { return IsRussian ? 1 : 0; }
         }
 
         public static string T(string key)

@@ -77,6 +77,8 @@ namespace QuayTools
         private readonly HashSet<PropInfo> _opaque = new HashSet<PropInfo>();
         private readonly Dictionary<PropInfo, Material> _simple = new Dictionary<PropInfo, Material>();
         private readonly Dictionary<PropInfo, Texture2D> _composite = new Dictionary<PropInfo, Texture2D>();
+        private readonly Dictionary<long, Material> _mulMats = new Dictionary<long, Material>();
+        private readonly Dictionary<long, Texture2D> _mulTex = new Dictionary<long, Texture2D>();
         private readonly HashSet<PropInfo> _compositeFailed = new HashSet<PropInfo>();
         private Texture2D _pavement;           // the game's theme pavement texture (base of a path without a decal)
         private bool _pavementSearched;
@@ -105,6 +107,17 @@ namespace QuayTools
                 if (kv.Value.Mesh != null) Destroy(kv.Value.Mesh);
             }
             _items.Clear();
+
+            foreach (KeyValuePair<long, Material> kv in _mulMats)
+            {
+                if (kv.Value != null) Destroy(kv.Value);
+            }
+            _mulMats.Clear();
+            foreach (KeyValuePair<long, Texture2D> kv in _mulTex)
+            {
+                if (kv.Value != null) Destroy(kv.Value);
+            }
+            _mulTex.Clear();
 
             if (_plain != null) Destroy(_plain);
             if (_litPlain != null) Destroy(_litPlain);
@@ -1128,7 +1141,7 @@ namespace QuayTools
                 if (item.Placed && item.PlaceProp != null)
                 {
                     PropInfo info = item.PlaceProp;
-                    Material mat = item.PlaceMat != null ? item.PlaceMat : info.m_material;
+                    Material mat = item.PlaceMat != null ? item.PlaceMat : GetColorMulMaterial(info, item.Settings.ColorMul);
                     if (item.Tiles == null || mat == null || info.m_mesh == null) continue;
                     if (pm == null) pm = Singleton<PropManager>.instance;
 
@@ -1333,6 +1346,56 @@ namespace QuayTools
             if (m.HasProperty("_ZWrite")) m.SetInt("_ZWrite", 0);
             _simple[info] = m;
             return m;
+        }
+
+        /// <summary>
+        /// The game applies the tint of a decal only where the colour channel (G) of its ACI map allows it. For "colour
+        /// multiply" the material of the decal is copied with an ACI map whose colour channel is raised toward 255
+        /// (step 10 = everywhere), so the texture is multiplied by the colour over the whole decal. Step 0 = the original material.
+        /// </summary>
+        private Material GetColorMulMaterial(PropInfo info, int step)
+        {
+            Material src = info.m_material;
+            if (step <= 0 || src == null) return src;
+            step = Mathf.Min(step, 10);
+
+            long key = (long)info.GetInstanceID() * 16L + step;
+            Material m;
+            if (_mulMats.TryGetValue(key, out m) && m != null) return m;
+
+            try
+            {
+                Texture aci = src.HasProperty("_ACIMap") ? src.GetTexture("_ACIMap") : null;
+                if (aci == null) return src; // no map: the game applies the colour everywhere already
+
+                int w = Mathf.Clamp(aci.width, 4, 512);
+                int h = Mathf.Clamp(aci.height, 4, 512);
+                Texture2D ta = ReadBack(aci, w, h);
+                Color32[] px = ta.GetPixels32();
+                Destroy(ta);
+
+                float k = step / 10f;
+                for (int i = 0; i < px.Length; i++) px[i].g = (byte)Mathf.Clamp(Mathf.RoundToInt(px[i].g + (255 - px[i].g) * k), 0, 255);
+
+                Texture2D t = new Texture2D(w, h, TextureFormat.RGBA32, true);
+                t.name = "QuayTools colour mask " + info.name + " " + step;
+                t.SetPixels32(px);
+                t.Apply(true);
+                t.wrapMode = aci.wrapMode;
+                t.filterMode = FilterMode.Bilinear;
+
+                m = new Material(src);
+                m.SetTexture("_ACIMap", t);
+                _mulTex[key] = t;
+                _mulMats[key] = m;
+                return m;
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning("[QuayTools] Colour multiply is not available for " + info.name + ": " + ex.Message);
+                _mulMats[key] = src;
+                return src;
+            }
         }
 
         private static Texture2D ReadBack(Texture source, int w, int h)

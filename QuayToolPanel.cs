@@ -63,6 +63,7 @@ namespace QuayTools
             public int Kind;                          // Favorites kind
             public UIComponent Parent;
             public string EmptyText;
+            public bool ShowEmpty = true;             // the empty row at the top of the list
             public Func<string, List<PickItem>> GetItems; // argument: search text
             public Action<PickItem> OnPicked;         // null item = the "empty" row
             public UILabel Title;
@@ -90,6 +91,9 @@ namespace QuayTools
         private const float BtnStride = 40f;
         private const float ToggleStride = 38f;
         private bool _built;
+        private int _langBuilt;
+        private static Vector3 _restorePos;
+        private static bool _hasRestorePos;
         private bool _loading;
 
         private PickerUi _openPopup;
@@ -133,8 +137,8 @@ namespace QuayTools
         private UIPanel _decal, _decalRight;
         private float _decalHeight, _decalLeft, _decalRestTop, _decalHeightFull, _decalHeightPlane;
         private UILabel _decalSel, _decalNav, _decalState;
-        private UISlider _dShiftX, _dWidth, _dScale, _dLateral, _dLift, _dStep, _dBox, _dStart, _dEnd;
-        private UITextField _dShiftXV, _dWidthV, _dScaleV, _dLateralV, _dLiftV, _dStepV, _dBoxV, _dStartV, _dEndV;
+        private UISlider _dMul, _dShiftX, _dWidth, _dScale, _dLateral, _dLift, _dStep, _dBox, _dStart, _dEnd;
+        private UITextField _dMulV, _dShiftXV, _dWidthV, _dScaleV, _dLateralV, _dLiftV, _dStepV, _dBoxV, _dStartV, _dEndV;
         private UIPanel _decalBox, _decalRest;   // projection size (hidden for a plane) and everything below it
         private PickerUi _decalUi;
         private UISlider[] _dRgba;     // R, G, B, A
@@ -203,6 +207,11 @@ namespace QuayTools
 
             Vector2 res = UIView.GetAView().GetScreenResolution();
             absolutePosition = new Vector3(Mathf.Max(20f, res.x - (ToolsWidth + PanelWidth * 2f) - 20f), 120f);
+            if (_hasRestorePos)
+            {
+                absolutePosition = _restorePos;
+                _hasRestorePos = false;
+            }
         }
 
         public override void Start()
@@ -270,7 +279,7 @@ namespace QuayTools
             slider.eventMouseUp += delegate (UIComponent c, UIMouseEventParameter p) { SliderDragging = false; };
             thumb.eventMouseDown += delegate (UIComponent c, UIMouseEventParameter p) { SliderDragging = true; };
             thumb.eventMouseUp += delegate (UIComponent c, UIMouseEventParameter p) { SliderDragging = false; };
-            slider.tooltip = Loc.IsRussian ? "Двойной клик: сбросить значение" : "Double click: reset the value";
+            slider.tooltip = Loc.T("tip_reset_value");
             slider.eventDoubleClick += delegate (UIComponent c, UIMouseEventParameter p) { slider.value = reset; };
             return slider;
         }
@@ -453,6 +462,7 @@ namespace QuayTools
         {
             if (_built) return;
             _built = true;
+            _langBuilt = Loc.Current;
 
             _drag = AddUIComponent<UIDragHandle>();
             _drag.width = width;
@@ -663,14 +673,14 @@ namespace QuayTools
 
             // ---- right column: all the values
             float y2 = 0f;
-            y2 = MakeValueRow(_netRight, y2, "nstart", -NetLine.MaxShift, 0f, 0f, out _nStart, out _nStartV,
-                delegate (int u) { OnNetValue("start", delegate (NetLine l) { l.StartShift = u; }); });
-            y2 = MakeValueRow(_netRight, y2, "nend", -NetLine.MaxShift, 0f, 0f, out _nEnd, out _nEndV,
-                delegate (int u) { OnNetValue("end", delegate (NetLine l) { l.EndShift = u; }); });
             y2 = MakeValueRow(_netRight, y2, "nlateral", -NetLine.MaxOffset, NetLine.MaxOffset, 0f, out _nLateral, out _nLateralV,
                 delegate (int u) { OnNetValue("lateral", delegate (NetLine l) { l.Lateral = u; }); });
             y2 = MakeValueRow(_netRight, y2, "nlift", -NetLine.MaxOffset, NetLine.MaxOffset, 0f, out _nLift, out _nLiftV,
                 delegate (int u) { OnNetValue("lift", delegate (NetLine l) { l.Lift = u; }); });
+            y2 = MakeValueRow(_netRight, y2, "nstart", -NetLine.MaxShift, 0f, 0f, out _nStart, out _nStartV,
+                delegate (int u) { OnNetValue("start", delegate (NetLine l) { l.StartShift = u; }); });
+            y2 = MakeValueRow(_netRight, y2, "nend", -NetLine.MaxShift, 0f, 0f, out _nEnd, out _nEndV,
+                delegate (int u) { OnNetValue("end", delegate (NetLine l) { l.EndShift = u; }); });
             y2 = MakeIntRow(_netRight, y2, "nscale", NetLine.ScaleMin, NetLine.ScaleMax, NetLine.ScaleDefault, " %", out _nScale, out _nScaleV,
                 delegate (int u) { OnNetValue("scale", delegate (NetLine l) { l.Scale = u; }); });
 
@@ -971,7 +981,7 @@ namespace QuayTools
             }
 
             ui.Entries.Clear();
-            if (string.IsNullOrEmpty(ui.Search.text.Trim())) ui.Entries.Add(null);
+            if (ui.ShowEmpty && string.IsNullOrEmpty(ui.Search.text.Trim())) ui.Entries.Add(null);
             ui.Entries.AddRange(favs);
             ui.Entries.AddRange(rest);
 
@@ -1371,12 +1381,12 @@ namespace QuayTools
 
         /// <summary>A label, a slider and a value field (metres) in one block; the slider ends right before the value field. Returns the y of the next block.</summary>
         private float MakeValueRow(UIComponent parent, float y, string labelKey, float min, float max, float reset,
-                                   out UISlider slider, out UITextField field, Action<int> onValue)
+                                   out UISlider slider, out UITextField field, Action<int> onValue, string unit = null)
         {
             UISlider sl = MakeSlider(parent, 12f, y + 20f, PanelWidth - 114f, min, max, reset);
             UITextField fl = null;
             MakeLabel(parent, Loc.T(labelKey), 12f, y, 0.72f);
-            MakeLabel(parent, Loc.T("meter").Trim(), PanelWidth - 24f, y + 21f, 0.72f);
+            MakeLabel(parent, unit != null ? unit : Loc.T("meter").Trim(), PanelWidth - 24f, y + 21f, 0.72f);
             fl = MakeField(parent, PanelWidth - 92f, y + 19f, delegate (float m) { OnFieldFor(sl, fl, m); }, Mathf.Max(Mathf.Abs(min), Mathf.Abs(max)) * FenceStore.Unit);
             fl.text = FormatOffset(reset);
 
@@ -1549,7 +1559,12 @@ namespace QuayTools
                 yr += 22f;
             }
             UpdateColorUi();
-            yr += 8f;
+            yr += 4f;
+
+            yr = MakeValueRow(_decalRest, yr, "dcolormul", 0f, 10f, 0f, out _dMul, out _dMulV,
+                delegate (int u) { OnDecalValue("colormul", delegate (DecalSettings d) { d.ColorMul = u; }); }, " ");
+            _dMul.tooltip = Loc.T("dcolormul_tip");
+            yr += 4f;
 
             _decalState = MakeLabel(_decalRest, string.Empty, 12f, yr, 0.75f);
             yr += 22f;
@@ -1586,6 +1601,16 @@ namespace QuayTools
                 template.Prop = _lastDecalProp;
                 if (_lastDecalProp != null) template.Scale = _lastDecalScale;
                 else template.Scale = NaturalPavementScale();
+                if (!plane && template.Prop == null)
+                {
+                    // a decal path always has a decal: the first one of the list until the player chooses
+                    List<DecalEntry> list = DecalCatalog.Entries;
+                    if (list.Count > 0)
+                    {
+                        template.Prop = list[0].Info.name;
+                        template.Scale = Mathf.Clamp(Mathf.RoundToInt(list[0].NaturalSize / FenceStore.Unit), DecalStore.MinScale, DecalStore.MaxScale);
+                    }
+                }
                 tool.AddDecal(template);
             };
             return b;
@@ -1743,7 +1768,7 @@ namespace QuayTools
             f.size = new Vector2(70f, 18f);
             f.relativePosition = new Vector3(x - 6f, y);
             f.text = "#FFFFFFFF";
-            f.tooltip = Loc.IsRussian ? "Цвет #RRGGBB или #RRGGBBAA (hex)" : "Colour #RRGGBB or #RRGGBBAA (hex)";
+            f.tooltip = Loc.T("tip_hex");
             f.eventTextSubmitted += delegate (UIComponent c, string t) { CommitHex(t); };
             f.eventLostFocus += delegate (UIComponent c, UIFocusEventParameter e) { CommitHex(_dHex.text); };
             return f;
@@ -1820,6 +1845,7 @@ namespace QuayTools
                 _brush.Width = d.Width;
                 _brush.Lateral = d.Lateral;
                 _brush.ShiftX = d.ShiftX;
+                _brush.ColorMul = d.ColorMul;
                 _brush.Lift = d.Lift;
                 _brush.R = d.R;
                 _brush.G = d.G;
@@ -1838,6 +1864,7 @@ namespace QuayTools
                 _dStep.value = d.Step;
                 _dBox.value = d.Box;
                 _dShiftX.value = d.ShiftX;
+                _dMul.value = d.ColorMul;
                 _dLateral.value = d.Lateral;
                 _dLift.value = d.Lift;
                 _dStart.value = d.StartShift;
@@ -1847,6 +1874,7 @@ namespace QuayTools
                 _dStepV.text = FormatOffset(_dStep.value);
                 _dBoxV.text = FormatOffset(_dBox.value);
                 _dShiftXV.text = FormatOffset(_dShiftX.value);
+                _dMulV.text = FormatOffset(_dMul.value);
                 _dLateralV.text = FormatOffset(_dLateral.value);
                 _dLiftV.text = FormatOffset(_dLift.value);
                 _dStartV.text = FormatOffset(_dStart.value);
@@ -1854,6 +1882,10 @@ namespace QuayTools
                 UpdateColorUi();
                 ShowBrushHeader();
                 UpdateDecalLayout(has0 && d.Strip);
+                bool decalPath = has0 && !d.Strip;
+                _decalUi.ShowEmpty = !decalPath;
+                _decalUi.EmptyText = Loc.T(decalPath ? "line_none" : "decal_solid");
+                ShowBrushHeader();
 
                 bool any = count > 0, has = _decalCount > 0;
                 _dAdd.isEnabled = any;
@@ -1868,6 +1900,7 @@ namespace QuayTools
                 _decalUi.Header.isEnabled = has;
                 UISlider[] sliders = { _dShiftX, _dWidth, _dScale, _dStep, _dBox, _dLateral, _dLift, _dStart, _dEnd };
                 for (int i = 0; i < sliders.Length; i++) sliders[i].isEnabled = has;
+                _dMul.isEnabled = has && !d.Strip; // a plane always multiplies
                 for (int i = 0; i < _dRgba.Length; i++) _dRgba[i].isEnabled = has;
                 _dHex.isEnabled = has;
                 if (_resetBtn != null) _resetBtn.isEnabled = has;
@@ -2296,6 +2329,17 @@ namespace QuayTools
         {
             if (!_built) return;
 
+            // the language of the game or the option changed: the texts are created once, so the window is built again
+            if (_langBuilt != Loc.Current)
+            {
+                bool visible = isVisible;
+                _restorePos = absolutePosition;
+                _hasRestorePos = true;
+                DestroyPanel();
+                if (visible) ShowPanel();
+                return;
+            }
+
             if (SliderDragging && !Input.GetMouseButton(0)) SliderDragging = false;
 
             if (_historyVersion != History.Version)
@@ -2326,7 +2370,7 @@ namespace QuayTools
                 if (!_built) return false;
                 UITextField[] fields =
                 {
-                    _dShiftXV, _pShiftXV, _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dStartV, _dEndV, _dHex,
+                    _dMulV, _dShiftXV, _pShiftXV, _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dStartV, _dEndV, _dHex,
                     _nStartV, _nEndV, _nLateralV, _nLiftV, _nScaleV, _pAngleV, _pScaleV, _pRandV,
                     _netUi.Search, _decalUi.Search, _propUi.Search, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV
                 };

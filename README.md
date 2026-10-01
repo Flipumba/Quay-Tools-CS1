@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.5.5**
+**Version: v0.5.6**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -101,8 +101,8 @@ Lays a ground decal (any decal prop you have: Workshop decals, cobblestones, mar
 2. Press **Add decal** or **Add plane** (side by side): a path appears in the middle of the quay; use **< >** to switch between the paths of the selection. The way of drawing is chosen when the path is added and stays with it (the button of the current path stays pressed):
    - **Decal**: game decals placed step by step along the path (like the game places decal props), with a projection box.
    - **Plane**: one textured strip cropped by the path edges, instead of placed decals. It lies lower than the quay surface by default (**Offset Z** 1 m), receives shadows when its tint is fully opaque, and is drawn unlit when the tint is translucent. The projection size is not shown for a plane.
-3. Left column: **Texture** drop-down list (the first entry, *Colour (no texture)*, uses the game's **theme pavement** texture, the one of pedestrian paths, tinted by the path colour), **Remove this path** / **Remove all paths**, **Undo / Redo / Reset**.
-4. Right column (values), in this order: **Path width** (0.1–50 m), **Texture scale** (width of one tile; choosing a decal sets its natural size, *Colour* sets the size of the theme pavement texture), **Texture step**, **Projection size** (decal only), **Offset X** (along the line; props, textures and tiles slide, the ends stay), **Offset Y** (+ toward the water), **Offset Z** (±50 m), **Line start** / **Line end** (0 to −50 m: the path is shortened at that end, like the lines of the other tools) and the **tint** (R, G, B, A sliders or a hex value `#RRGGBB` / `#RRGGBBAA`).
+3. Left column: **Texture** drop-down list (decal paths always use a decal texture; a plane can also use the first entry, *Colour (no texture)*, which is the game's **theme pavement** texture tinted by the path colour), **Remove this path** / **Remove all paths**, **Undo / Redo / Reset**.
+4. Right column (values), in this order: **Path width** (0.1–50 m), **Texture scale** (width of one tile; choosing a decal sets its natural size, *Colour* sets the size of the theme pavement texture), **Texture step**, **Projection size** (decal only), **Offset X** (along the line; props, textures and tiles slide, the ends stay), **Offset Y** (+ toward the water), **Offset Z** (±50 m), **Line start** / **Line end** (0 to −50 m: the path is shortened at that end, like the lines of the other tools) the **tint** (R, G, B, A sliders or a hex value `#RRGGBB` / `#RRGGBBAA`) and **Colour multiply** (0–1: 0 = tint only where the decal allows it, 1 = texture fully multiplied by the tint, e.g. white or dark).
 5. A plane draws the composed texture of the decal prop (colours from its diffuse map, opacity from its ACI map).
 
 Changes apply to the same path number on all selected segments. The path is built from the two edge curves of the segment, so it follows the curves and heights of the quay, also after node edits made with Node Controller Renewal. Saves of v0.4.x keep their path (the old global rendering option becomes the way of drawing of each path).
@@ -215,6 +215,13 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.5.6
+- Interface language: the window was only half translated when the game language was English, because its texts were created once. The window is now built again when the language changes, and all texts have both languages.
+- New option **Language** in the mod options: *Auto* (the language of the game), *English* or *Русский*. The options page itself is translated into Russian too (the options page changes its language when it is opened again).
+- Texture-path: the **Colour (no texture)** choice is gone for decal paths (the game did not project anything without a texture); a new decal path starts with the first decal of the list. A plane can still be drawn without a texture (theme pavement and colour).
+- Texture-path: new value **Colour multiply** under the palette (0 to 1). 0 is the old behaviour (the game applies the tint only where the decal allows a colour), 1 multiplies the whole texture by the colour. It works for placed decals; a plane always multiplies.
+- Network-line: **Line start** and **Line end** (were *Line start offset* / *Line end offset*) now come after **Offset Z**.
 
 ### v0.5.5
 - Line across a node (Network-line, Props-line, Texture-path), rebuilt after reading the source of Node Controller Renewal and the game's node rendering: NCR changes the corner position and direction of every segment end (corner offset, shift, stretch, embankment, slope, twist, sharp corners, per-corner position / direction) inside `NetSegment.CalculateCorner`, and the game draws the surface of a bend node from those corners: its two edge curves join each corner of one segment with the corner of the other segment that is on the same side (matched by the side going away from the node, not by distance) with smooth ends. The line over a node is now exactly that surface at the line's position (so it follows the real shape and height of the node), it starts and ends at the end points of the two segment lines, and it leaves each of them in the direction of that segment's line (a small correction only, so there is no kink). The centre-line shortcut is used only for turns above 110 degrees.

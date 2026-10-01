@@ -24,6 +24,7 @@ namespace QuayTools
         private static readonly SavedBool MarkEditedValue;
         private static readonly SavedInt IconSizeValue;
         private static readonly SavedBool HideHighlightValue;
+        private static readonly SavedInt LanguageValue;
         private static readonly SavedString[] FavValues = new SavedString[3];
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
@@ -47,6 +48,7 @@ namespace QuayTools
             MarkEditedValue = new SavedBool("MarkEdited", FileName, true, true);
             IconSizeValue = new SavedInt("MarkIconSize", FileName, 2, true);
             HideHighlightValue = new SavedBool("HideHighlightUi", FileName, false, true);
+            LanguageValue = new SavedInt("UiLanguage", FileName, 0, true);
             for (int i = 0; i < FavValues.Length; i++) FavValues[i] = new SavedString("Favourites" + i, FileName, string.Empty, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
@@ -104,6 +106,13 @@ namespace QuayTools
             get { return Mathf.Clamp(IconSizeValue.value, 1, 3); }
         }
 
+        /// <summary>Interface language: 0 = the game language, 1 = English, 2 = Russian.</summary>
+        public static int UiLanguage
+        {
+            get { return Mathf.Clamp(LanguageValue.value, 0, 2); }
+            set { LanguageValue.value = Mathf.Clamp(value, 0, 2); }
+        }
+
         /// <summary>Hide the highlight of the quay borders and lines while a slider is being dragged.</summary>
         public static bool HideHighlightUi
         {
@@ -137,7 +146,12 @@ namespace QuayTools
         {
             UIHelperBase group = helper.AddGroup("Quay Tools");
 
-            group.AddCheckbox("Enable quick-flip hotkey (Ctrl + key over a quay, no tool needed)", QuickFlip.value, delegate (bool isChecked)
+            group.AddDropdown(Loc.T("opt_lang"), new string[] { Loc.T("opt_lang_auto"), "English", "Русский" }, UiLanguage, delegate (int sel)
+            {
+                UiLanguage = sel;
+            });
+
+            group.AddCheckbox(Loc.T("opt_quickflip"), QuickFlip.value, delegate (bool isChecked)
             {
                 QuickFlip.value = isChecked;
             });
@@ -145,42 +159,42 @@ namespace QuayTools
             int current = KeyIndex.value;
             if (current < 0 || current >= Keys.Length) current = 0;
 
-            group.AddDropdown("Quick-flip hotkey", KeyLabels, current, delegate (int sel)
+            group.AddDropdown(Loc.T("opt_hotkey"), KeyLabels, current, delegate (int sel)
             {
                 KeyIndex.value = sel;
             });
 
-            group.AddCheckbox("Swap land/water sides for fences (use only if fences go to the wrong side everywhere)", Swap.value, delegate (bool isChecked)
+            group.AddCheckbox(Loc.T("opt_swap"), Swap.value, delegate (bool isChecked)
             {
                 Swap.value = isChecked;
             });
 
-            group.AddCheckbox("Ctrl+Z / Ctrl+Y undo and redo while the Quay Tools window is open (turn off if it clashes with another undo mod)", UndoKeys.value, delegate (bool isChecked)
+            group.AddCheckbox(Loc.T("opt_undokeys"), UndoKeys.value, delegate (bool isChecked)
             {
                 UndoKeys.value = isChecked;
             });
 
-            group.AddCheckbox("Texture-path strips receive shadows (lit shader; turn off for the unlit look if the colours look wrong)", DecalShadows.value, delegate (bool isChecked)
+            group.AddCheckbox(Loc.T("opt_shadows"), DecalShadows.value, delegate (bool isChecked)
             {
                 DecalShadows.value = isChecked;
             });
 
-            group.AddCheckbox("Texture and prop paths: at sharp bends of nodes (Node Controller Renewal) bridge the gap along the centre line", BridgeCentre.value, delegate (bool isChecked)
+            group.AddCheckbox(Loc.T("opt_bridge"), BridgeCentre.value, delegate (bool isChecked)
             {
                 BridgeCentre.value = isChecked;
             });
 
-            group.AddCheckbox("While the tool is active, highlight edited segments and show tool icons above them", MarkEditedValue.value, delegate (bool isChecked)
+            group.AddCheckbox(Loc.T("opt_mark"), MarkEditedValue.value, delegate (bool isChecked)
             {
                 MarkEditedValue.value = isChecked;
             });
 
-            group.AddDropdown("Size of the floating tool icons above edited segments", new string[] { "1 (small)", "2 (default)", "3 (large)" }, MarkIconSize - 1, delegate (int sel)
+            group.AddDropdown(Loc.T("opt_iconsize"), new string[] { Loc.T("opt_icon1"), Loc.T("opt_icon2"), Loc.T("opt_icon3") }, MarkIconSize - 1, delegate (int sel)
             {
                 IconSizeValue.value = sel + 1;
             });
 
-            group.AddCheckbox("Allow tools on any network segment (not only quays)", AnyNetwork.value, delegate (bool isChecked)
+            group.AddCheckbox(Loc.T("opt_anynet"), AnyNetwork.value, delegate (bool isChecked)
             {
                 AnyNetwork.value = isChecked;
             });
