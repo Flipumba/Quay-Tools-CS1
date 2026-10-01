@@ -22,6 +22,7 @@ namespace QuayTools
         private static readonly SavedBool DecalShadows;
         private static readonly SavedBool BridgeCentre;
         private static readonly SavedBool MarkEditedValue;
+        private static readonly SavedString[] FavValues = new SavedString[3];
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
         public static readonly SavedInputKey ActivationKey;
@@ -42,6 +43,7 @@ namespace QuayTools
             DecalShadows = new SavedBool("DecalReceiveShadows", FileName, true, true);
             BridgeCentre = new SavedBool("BridgeCentreLine", FileName, true, true);
             MarkEditedValue = new SavedBool("MarkEdited", FileName, true, true);
+            for (int i = 0; i < FavValues.Length; i++) FavValues[i] = new SavedString("Favourites" + i, FileName, string.Empty, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
                 SavedInputKey.Encode(KeyCode.Q, true, true, false), true);
@@ -96,6 +98,17 @@ namespace QuayTools
         public static bool MarkEdited
         {
             get { return MarkEditedValue.value; }
+        }
+
+        /// <summary>Favourite list of a drop-down kind (see Favorites), items separated by '|'.</summary>
+        public static string GetFavorites(int kind)
+        {
+            return kind >= 0 && kind < FavValues.Length ? FavValues[kind].value : string.Empty;
+        }
+
+        public static void SetFavorites(int kind, string value)
+        {
+            if (kind >= 0 && kind < FavValues.Length) FavValues[kind].value = value ?? string.Empty;
         }
 
         public static bool QuickFlipEnabled

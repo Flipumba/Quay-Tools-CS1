@@ -10,8 +10,9 @@ namespace QuayTools
     {
         public const int StepDefault = 100;  // 10 m
         public const int StepMin = 5;        // 0.5 m
-        public const int StepMax = 5000;     // 500 m
-        public const int MaxShift = 500;     // 50 m (start / end shift)
+        public const int StepMax = 500;      // 50 m
+        public const int MaxShift = 500;     // 50 m (start / end trim)
+        public const int MaxOffset = 500;    // 50 m (sideways and vertical offset)
         public const int ScaleDefault = 100; // percent
         public const int ScaleMin = 5;
         public const int ScaleMax = 1000;
@@ -20,7 +21,7 @@ namespace QuayTools
         public string Prop;                  // name of the prop (PropInfo); null = nothing chosen yet
         public bool Enabled = true;
         public int Step = StepDefault;       // distance between props along the quay, units of 0.1 m
-        public int StartShift, EndShift;     // units of 0.1 m, positive extends the line beyond the segment end
+        public int StartShift, EndShift;     // units of 0.1 m, -MaxShift..0: how much the line is shortened at that end
         public int Lateral;                  // units of 0.1 m, + toward the water, - toward the land
         public int Lift;                     // units of 0.1 m, + up
         public int Angle;                    // degrees, turn of every prop around the vertical axis (0 = prop faces along the quay)
@@ -206,7 +207,8 @@ namespace QuayTools
                                 PropEntry e = new PropEntry();
                                 string prop = r.ReadString();
                                 e.Prop = prop.Length == 0 ? null : prop;
-                                e.Enabled = r.ReadBoolean();
+                                r.ReadBoolean(); // the on/off switch was removed in v0.4.1
+                                e.Enabled = true;
                                 e.Step = r.ReadInt32();
                                 e.StartShift = r.ReadInt32();
                                 e.EndShift = r.ReadInt32();
@@ -216,6 +218,11 @@ namespace QuayTools
                                 e.RandomRotation = r.ReadBoolean();
                                 e.Scale = r.ReadInt32();
                                 e.ScaleRandom = r.ReadInt32();
+                                e.Step = Mathf.Clamp(e.Step, PropEntry.StepMin, PropEntry.StepMax);
+                                e.StartShift = Mathf.Clamp(e.StartShift, -PropEntry.MaxShift, 0);
+                                e.EndShift = Mathf.Clamp(e.EndShift, -PropEntry.MaxShift, 0);
+                                e.Lateral = Mathf.Clamp(e.Lateral, -PropEntry.MaxOffset, PropEntry.MaxOffset);
+                                e.Lift = Mathf.Clamp(e.Lift, -PropEntry.MaxOffset, PropEntry.MaxOffset);
                                 line.Entries.Add(e);
                             }
                             if (line.Entries.Count > 0) Map[id] = line;

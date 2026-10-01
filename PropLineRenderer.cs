@@ -20,8 +20,10 @@ namespace QuayTools
         private class Built
         {
             public PropInfo Info;
-            public Matrix4x4[] Matrices;
+            public TreeInfo Tree;
+            public Matrix4x4[] Matrices; // props
             public Vector3[] Positions;
+            public float[] Scales;       // trees
             public float ViewDistance;
         }
 
@@ -42,6 +44,19 @@ namespace QuayTools
         private int _version = -1;
         private int _cursor;
         private int _logged;
+
+        /// <summary>The renderer of the current map (used by the tree rendering patch).</summary>
+        internal static PropLineRenderer Instance;
+
+        private void Awake()
+        {
+            Instance = this;
+        }
+
+        private void OnDestroy()
+        {
+            if (Instance == this) Instance = null;
+        }
 
         private void Update()
         {
@@ -145,10 +160,11 @@ namespace QuayTools
                     PropEntry e = item.Settings.Entries[k];
                     if (!e.Enabled || string.IsNullOrEmpty(e.Prop)) continue;
 
-                    PropInfo info = PropCatalog.Find(e.Prop);
-                    if (info == null || !PropCatalog.IsUsable(info))
+                    PropInfo info;
+                    TreeInfo tree;
+                    if (!PropCatalog.Resolve(e.Prop, out info, out tree))
                     {
-                        if (_reported.Add(e.Prop)) Debug.LogWarning("[QuayTools] Prop line: prop '" + e.Prop + "' is not available (asset missing or not usable)");
+                        if (_reported.Add(e.Prop)) Debug.LogWarning("[QuayTools] Prop line: '" + e.Prop + "' is not available (asset missing or not usable)");
                         continue;
                     }
 
@@ -157,9 +173,11 @@ namespace QuayTools
                     float lift = e.Lift * FenceStore.Unit;
 
                     Vector3[] P = new Vector3[4];
-                    if (!ok || !DecalRenderer.CornerControlPoints(c, tmp, lift, waterRight, P))
+                    bool good = ok;
+                    if (!good || !DecalRenderer.CornerControlPoints(c, tmp, lift, waterRight, P))
                     {
                         DecalRenderer.NodeControlPoints(id, tmp, lift, waterRight, P);
+                        good = false;
                     }
 
                     bool finite = true;
@@ -167,14 +185,16 @@ namespace QuayTools
                     if (!finite) continue;
 
                     DecalRenderer.Path path = DecalRenderer.SamplePath(P);
-                    Built built = Place(id, k, e, info, path);
+                    if (good) ExtendToNodeCentres(id, c, tmp, lift, waterRight, path);
+
+                    Built built = Place(id, k, e, info, tree, path);
                     if (built != null)
                     {
                         item.Built.Add(built);
                         if (_logged < 6)
                         {
                             _logged++;
-                            Debug.Log("[QuayTools] Prop line: segment " + id + ", " + info.name + ", " + built.Matrices.Length + " props, length " + path.Length.ToString("0.0") + " m");
+                            Debug.Log("[QuayTools] Prop line: segment " + id + ", " + e.Prop + ", " + built.Positions.Length + " items, length " + path.Length.ToString("0.0") + " m");
                         }
                     }
                 }
@@ -185,51 +205,136 @@ namespace QuayTools
             }
         }
 
-        private static Built Place(ushort id, int index, PropEntry e, PropInfo info, DecalRenderer.Path path)
+        /// <summary>True when exactly two segments meet at the node (only then the gap between their ends can be split between them).</summary>
+        private static bool JoinsTwo(ushort nodeId)
+        {
+            if (nodeId == 0) return false;
+            NetNode node = NetManager.instance.m_nodes.m_buffer[nodeId];
+            int count = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                if (node.GetSegment(i) != 0) count++;
+            }
+            return count == 2;
+        }
+
+        /// <summary>
+        /// The line of a segment runs from the middle of its start node to the middle of its end node: the path is
+        /// continued over half of the gap between the segment end and its neighbour (the neighbour covers the other half),
+        /// following the bend and the height curve of the node.
+        /// </summary>
+        private static void ExtendToNodeCentres(ushort id, DecalRenderer.Corners c, DecalSettings tmp, float lift, bool waterRight, DecalRenderer.Path path)
+        {
+            NetSegment seg = NetManager.instance.m_segments.m_buffer[id];
+            Vector3[] Qs = null, Qe = null;
+
+            if (JoinsTwo(seg.m_startNode))
+            {
+                Vector3[] q = new Vector3[4];
+                if (DecalRenderer.BridgeControlPoints(id, seg.m_startNode, true, c, tmp, lift, waterRight, q) &&
+                    new Vector2(q[0].x - q[3].x, q[0].z - q[3].z).magnitude > 0.05f)
+                {
+                    Qs = FenceHeight.SubCubic(q, 0.5f, 1f); // second half: from the node middle to the segment start
+                }
+            }
+            if (JoinsTwo(seg.m_endNode))
+            {
+                Vector3[] q = new Vector3[4];
+                if (DecalRenderer.BridgeControlPoints(id, seg.m_endNode, false, c, tmp, lift, waterRight, q) &&
+                    new Vector2(q[0].x - q[3].x, q[0].z - q[3].z).magnitude > 0.05f)
+                {
+                    Qe = FenceHeight.SubCubic(q, 0f, 0.5f); // first half: from the segment end to the node middle
+                }
+            }
+            DecalRenderer.ExtendCurve(path, Qs, Qe);
+        }
+
+        /// <summary>
+        /// Positions are the grid d = k * step counted from the start of the line (the middle of the start node), so
+        /// trimming one end never moves the props at the other end. The trim only removes props.
+        /// </summary>
+        private static Built Place(ushort id, int index, PropEntry e, PropInfo info, TreeInfo tree, DecalRenderer.Path path)
         {
             float len = path.Length;
-            float from = -e.StartShift * FenceStore.Unit;   // positive start shift: the line starts before the segment start
-            float to = len + e.EndShift * FenceStore.Unit;  // positive end shift: the line ends after the segment end
-            if (to < from) return null;
+            float trimS = Mathf.Max(0f, -e.StartShift) * FenceStore.Unit;
+            float trimE = Mathf.Max(0f, -e.EndShift) * FenceStore.Unit;
+            float lo = trimS - 0.001f, hi = len - trimE + 0.001f;
+            if (hi < lo) return null;
 
             float step = Mathf.Max(e.Step * FenceStore.Unit, 0.5f);
-            int count = Mathf.FloorToInt((to - from) / step + 0.0001f) + 1;
-            if (count > MaxPerEntry)
+            int last = Mathf.FloorToInt(len / step + 0.0001f);
+            if (last + 1 > MaxPerEntry)
             {
-                count = MaxPerEntry;
-                step = (to - from) / (count - 1);
+                last = MaxPerEntry - 1;
+                step = len / last;
             }
-            if (count < 1) return null;
 
-            Built built = new Built();
-            built.Info = info;
-            built.Matrices = new Matrix4x4[count];
-            built.Positions = new Vector3[count];
-            built.ViewDistance = info.m_maxRenderDistance > 1f ? info.m_maxRenderDistance : DefaultViewDistance;
+            List<Vector3> positions = new List<Vector3>();
+            List<Matrix4x4> matrices = new List<Matrix4x4>();
+            List<float> scales = new List<float>();
 
             System.Random rnd = new System.Random(unchecked(id * 7919 + index * 104729 + 17));
             path.ResetCursor();
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i <= last; i++)
             {
-                float d = from + i * step;
+                double r1 = rnd.NextDouble(), r2 = rnd.NextDouble(); // drawn for every grid position, kept or not
+                float d = i * step;
+                if (d < lo || d > hi) continue;
+
                 Vector3 pos, left;
                 path.Eval(Mathf.Clamp(d, 0f, len), out pos, out left);
 
                 Vector3 fwd = Vector3.Cross(Vector3.up, left);
                 if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
-                if (d < 0f) pos += fwd * d;                 // before the start: continue straight
-                else if (d > len) pos += fwd * (d - len);   // after the end: continue straight
 
-                double r1 = rnd.NextDouble(), r2 = rnd.NextDouble();
                 float yaw = e.Angle + (e.RandomRotation ? (float)(r1 * 360.0) : 0f);
                 float scale = e.Scale / 100f * (1f + (float)(r2 * 2.0 - 1.0) * e.ScaleRandom / 100f);
                 scale = Mathf.Max(scale, 0.05f);
 
-                Quaternion rot = Quaternion.LookRotation(fwd, Vector3.up) * Quaternion.Euler(0f, yaw, 0f);
-                built.Matrices[i] = Matrix4x4.TRS(pos, rot, new Vector3(scale, scale, scale));
-                built.Positions[i] = pos;
+                positions.Add(pos);
+                scales.Add(scale);
+                if (info != null)
+                {
+                    Quaternion rot = Quaternion.LookRotation(fwd, Vector3.up) * Quaternion.Euler(0f, yaw, 0f);
+                    matrices.Add(Matrix4x4.TRS(pos, rot, new Vector3(scale, scale, scale)));
+                }
             }
+            if (positions.Count == 0) return null;
+
+            Built built = new Built();
+            built.Info = info;
+            built.Tree = tree;
+            built.Positions = positions.ToArray();
+            built.Scales = scales.ToArray();
+            built.Matrices = matrices.ToArray();
+            built.ViewDistance = info != null && info.m_maxRenderDistance > 1f ? info.m_maxRenderDistance : DefaultViewDistance;
             return built;
+        }
+
+        // ---------- trees ----------
+
+        /// <summary>Called by the game's tree rendering (patch on TreeManager.EndRenderingImpl).</summary>
+        internal void RenderTrees(RenderManager.CameraInfo cameraInfo)
+        {
+            if (cameraInfo == null) return;
+            float maxSqr = DefaultViewDistance * 2f;
+            maxSqr *= maxSqr;
+
+            for (int i = 0; i < _ids.Count; i++)
+            {
+                Item item;
+                if (!_items.TryGetValue(_ids[i], out item)) continue;
+                for (int b = 0; b < item.Built.Count; b++)
+                {
+                    Built built = item.Built[b];
+                    if (built.Tree == null) continue;
+                    for (int k = 0; k < built.Positions.Length; k++)
+                    {
+                        if ((built.Positions[k] - cameraInfo.m_position).sqrMagnitude > maxSqr) continue;
+                        TreeInstance.RenderInstance(cameraInfo, built.Tree, built.Positions[k], built.Scales[k], 1f, RenderManager.DefaultColorLocation, false);
+                    }
+                }
+            }
         }
 
         // ---------- drawing ----------
@@ -248,6 +353,7 @@ namespace QuayTools
                 {
                     Built built = item.Built[b];
                     PropInfo info = built.Info;
+                    if (built.Tree != null) continue;
                     if (info == null || info.m_mesh == null || info.m_material == null) continue;
 
                     _block.Clear();
@@ -266,6 +372,37 @@ namespace QuayTools
                         Graphics.DrawMesh(info.m_mesh, built.Matrices[k], info.m_material, info.m_prefabDataLayer, null, 0, _block);
                     }
                 }
+            }
+        }
+    }
+}
+
+namespace QuayTools.Patches
+{
+    /// <summary>
+    /// Trees of the prop lines are drawn through the game's own tree renderer (it batches them with its LOD meshes), so
+    /// they are submitted just before the game finishes the tree rendering.
+    /// </summary>
+    [HarmonyLib.HarmonyPatch]
+    internal static class TreeRenderPatch
+    {
+        public static System.Reflection.MethodBase TargetMethod()
+        {
+            System.Reflection.MethodBase m = HarmonyLib.AccessTools.Method(typeof(TreeManager), "EndRenderingImpl");
+            if (m == null) UnityEngine.Debug.LogWarning("[QuayTools] TreeManager.EndRenderingImpl not found: trees in prop lines are unavailable");
+            return m;
+        }
+
+        public static void Prefix(RenderManager.CameraInfo __0)
+        {
+            try
+            {
+                PropLineRenderer r = PropLineRenderer.Instance;
+                if (r != null) r.RenderTrees(__0);
+            }
+            catch (System.Exception ex)
+            {
+                UnityEngine.Debug.LogWarning("[QuayTools] Tree rendering failed: " + ex.Message);
             }
         }
     }

@@ -17,6 +17,10 @@ namespace QuayTools
         private const float ContentTop = 172f;
         private const float RowHeight = 36f;
         private const int MaxPopupRows = 8;
+        private const float ListTop = 34f;
+        private const float RowStride = RowHeight + 2f;
+
+        private static Texture2D _starOff, _starOn;
 
         public static QuayToolPanel Instance { get; private set; }
 
@@ -38,26 +42,45 @@ namespace QuayTools
             public UITextureAtlas Atlas;
             public string Thumb;
             public object Tag;
+            public string Key;   // what identifies the item for favourites
+            public bool Fav;
+        }
+
+        /// <summary>One pooled row of a drop-down list.</summary>
+        private class RowUi
+        {
+            public UIButton Button;
+            public UISprite Icon;
+            public UIButton StarButton;
+            public UITextureSprite Star;
+            public PickItem Item;
+            public bool Empty;
         }
 
         private class PickerUi
         {
             public bool Land;
+            public int Kind;                          // Favorites kind
             public UIComponent Parent;
             public string EmptyText;
-            public Func<List<PickItem>> GetItems;
-            public Action<PickItem> OnPicked; // null item = the "empty" row
+            public Func<string, List<PickItem>> GetItems; // argument: search text
+            public Action<PickItem> OnPicked;         // null item = the "empty" row
             public UILabel Title;
             public UIButton Header;
             public UISprite Icon;
             public UILabel Name;
             public UISlider H, V;
             public UITextField HValue, VValue;
-            public UISlider S0, S1, Scale;       // fence end shifts and width scale (right column)
-            public UITextField S0V, S1V;
-            public UILabel ScaleV;
-            public UIScrollablePanel Popup;
+            public UISlider S0, S1, Scale;            // fence end trims and width scale (right column)
+            public UITextField S0V, S1V, ScaleV;
+            public Toggle Flip;
+            public UIPanel Popup;
+            public UITextField Search;
             public UIScrollbar Bar;
+            public readonly List<RowUi> Rows = new List<RowUi>();
+            public List<PickItem> Entries = new List<PickItem>(); // what the list shows (null = the empty row)
+            public int Offset;                        // first visible entry
+            public bool SyncBar;
         }
 
         private UIDragHandle _drag;
@@ -81,6 +104,7 @@ namespace QuayTools
         private UIPanel _adv;
         private UIButton _advToggle;
         private bool _advOpen;
+        private float _advHeight;
         private Toggle _detachStart, _detachEnd;
 
         // orientation lock section
@@ -96,11 +120,10 @@ namespace QuayTools
         private UILabel _propSel, _propNav, _propState;
         private UIButton _propPrev, _propNext, _propAdd, _propRemove, _propClear;
         private PickerUi _propUi;
-        private UITextField _propSearch;
         private UISlider _pStep, _pStart, _pEnd, _pLateral, _pLift, _pAngle, _pScale, _pRand;
         private UITextField _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV;
-        private UILabel _pAngleV, _pScaleV, _pRandV;
-        private Toggle _pRotate, _pEnabled;
+        private UITextField _pAngleV, _pScaleV, _pRandV;
+        private Toggle _pRotate;
         private int _propIndex;
         private int _propCount;
 
@@ -347,26 +370,39 @@ namespace QuayTools
             return t;
         }
 
-        /// <summary>A label with the value on the right and a slider (whole numbers with a unit suffix such as " %"); returns the y of the next block.</summary>
+        /// <summary>A label, a slider and a value field for whole numbers (with a unit such as %); returns the y of the next block.</summary>
         private float MakeIntRow(UIComponent parent, float y, string labelKey, int min, int max, int reset, string suffix,
-                                 out UISlider slider, out UILabel value, Action<int> onValue)
+                                 out UISlider slider, out UITextField value, Action<int> onValue)
         {
             MakeLabel(parent, Loc.T(labelKey), 12f, y, 0.72f);
-            UILabel vl = MakeLabel(parent, reset + suffix, PanelWidth - 76f, y + 1f, 0.72f);
-            vl.autoSize = false;
-            vl.width = 64f;
-            vl.textAlignment = UIHorizontalAlignment.Right;
+            MakeLabel(parent, suffix.Trim(), PanelWidth - 24f, y + 21f, 0.72f);
 
-            UISlider sl = MakeSlider(parent, 12f, y + 20f, PanelWidth - 24f, min, max, reset);
+            UISlider sl = MakeSlider(parent, 12f, y + 20f, PanelWidth - 114f, min, max, reset);
+            UITextField fl = null;
+            fl = MakeField(parent, PanelWidth - 92f, y + 19f, delegate (float v)
+            {
+                if (float.IsNaN(v))
+                {
+                    fl.text = Mathf.RoundToInt(sl.value).ToString();
+                    return;
+                }
+                float target = Mathf.Clamp(Mathf.Round(v), min, max);
+                if (Mathf.Approximately(target, sl.value)) fl.text = ((int)target).ToString();
+                else sl.value = target; // raises eventValueChanged -> applies it
+            }, max);
+            fl.tooltip = Loc.F("typehint_int", min, max);
+            fl.text = reset.ToString();
+
+            UITextField flCaptured = fl;
             sl.eventValueChanged += delegate (UIComponent c, float v)
             {
                 int u = Mathf.RoundToInt(v);
-                vl.text = u + suffix;
+                flCaptured.text = u.ToString();
                 onValue(u);
             };
 
             slider = sl;
-            value = vl;
+            value = fl;
             return y + 44f;
         }
 
@@ -582,7 +618,9 @@ namespace QuayTools
             note.width = PanelWidth - 24f;
             note.wordWrap = true;
             note.autoSize = false;
-            note.height = 52f;
+            note.height = 70f;
+            y += 74f;
+            _advHeight = y;
         }
 
         private void BuildAdvancedBlock(PickerUi ui, bool land, ref float y)
@@ -591,13 +629,16 @@ namespace QuayTools
             title.textColor = land ? new Color32(140, 255, 160, 255) : new Color32(140, 200, 255, 255);
             y += 22f;
 
-            y = MakeValueRow(_adv, y, "fstart", -FenceStore.MaxShift, FenceStore.MaxShift, 0f, out ui.S0, out ui.S0V,
+            y = MakeValueRow(_adv, y, "fstart", -FenceStore.MaxShift, 0f, 0f, out ui.S0, out ui.S0V,
                 delegate (int u) { OnFenceChange(land ? "lstart" : "wstart", delegate (FenceSettings f) { if (land) f.LandStart = u; else f.WaterStart = u; }); });
-            y = MakeValueRow(_adv, y, "fend", -FenceStore.MaxShift, FenceStore.MaxShift, 0f, out ui.S1, out ui.S1V,
+            y = MakeValueRow(_adv, y, "fend", -FenceStore.MaxShift, 0f, 0f, out ui.S1, out ui.S1V,
                 delegate (int u) { OnFenceChange(land ? "lend" : "wend", delegate (FenceSettings f) { if (land) f.LandEnd = u; else f.WaterEnd = u; }); });
             y = MakeIntRow(_adv, y, "fscale", FenceStore.ScaleMin, FenceStore.ScaleMax, FenceStore.ScaleDefault, " %", out ui.Scale, out ui.ScaleV,
                 delegate (int u) { OnFenceChange(land ? "lscale" : "wscale", delegate (FenceSettings f) { if (land) f.LandScale = u; else f.WaterScale = u; }); });
-            y += 6f;
+            ui.Flip = MakeToggle(_adv, 10f, y, PanelWidth - 20f, "flipmodel", null,
+                delegate (bool v) { OnFenceChange(land ? "lflip" : "wflip", delegate (FenceSettings f) { if (land) f.LandFlip = v; else f.WaterFlip = v; }); });
+            y += 36f;
+            y += 4f;
         }
 
         /// <summary>A control of the extra column changed: apply it to the selected segments (not while controls are loaded).</summary>
@@ -615,17 +656,20 @@ namespace QuayTools
 
             ui.Parent = _add;
             ui.EmptyText = Loc.T("empty");
-            ui.GetItems = delegate ()
+            ui.Kind = Favorites.Fences;
+            ui.GetItems = delegate (string text)
             {
                 List<PickItem> items = new List<PickItem>();
                 List<FenceEntry> list = FenceCatalog.Entries;
                 for (int i = 0; i < list.Count; i++)
                 {
+                    if (!Matches(text, list[i].Title, list[i].Info.name)) continue;
                     PickItem it = new PickItem();
                     it.Title = list[i].Title;
                     it.Atlas = list[i].Info.m_Atlas;
                     it.Thumb = list[i].Info.m_Thumbnail;
                     it.Tag = list[i].Info;
+                    it.Key = list[i].Info.name;
                     items.Add(it);
                 }
                 return items;
@@ -645,19 +689,19 @@ namespace QuayTools
             PickerUi captured = ui;
             y += 42f;
 
-            float sliderWidth = PanelWidth - 24f;
+            float sliderWidth = PanelWidth - 114f;
 
             MakeLabel(_add, Loc.T("hoff"), 12f, y, 0.72f);
-            MakeLabel(_add, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
-            ui.HValue = MakeField(_add, PanelWidth - 94f, y - 1f, delegate (float m) { OnField(captured, true, m); }, FenceStore.MaxUnits * FenceStore.Unit);
+            MakeLabel(_add, Loc.T("meter").Trim(), PanelWidth - 24f, y + 21f, 0.72f);
+            ui.HValue = MakeField(_add, PanelWidth - 92f, y + 19f, delegate (float m) { OnField(captured, true, m); }, FenceStore.MaxUnits * FenceStore.Unit);
             y += 20f;
             ui.H = MakeSlider(_add, 12f, y, sliderWidth, -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f);
             ui.H.eventValueChanged += delegate (UIComponent c, float v) { OnSlider(captured, true, v); };
             y += 22f;
 
             MakeLabel(_add, Loc.T("voff"), 12f, y, 0.72f);
-            MakeLabel(_add, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
-            ui.VValue = MakeField(_add, PanelWidth - 94f, y - 1f, delegate (float m) { OnField(captured, false, m); }, FenceStore.MaxUnits * FenceStore.Unit);
+            MakeLabel(_add, Loc.T("meter").Trim(), PanelWidth - 24f, y + 21f, 0.72f);
+            ui.VValue = MakeField(_add, PanelWidth - 92f, y + 19f, delegate (float m) { OnField(captured, false, m); }, FenceStore.MaxUnits * FenceStore.Unit);
             y += 20f;
             ui.V = MakeSlider(_add, 12f, y, sliderWidth, -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f);
             ui.V.eventValueChanged += delegate (UIComponent c, float v) { OnSlider(captured, false, v); };
@@ -694,35 +738,57 @@ namespace QuayTools
             ui.Header.eventClicked += delegate (UIComponent c, UIMouseEventParameter p) { TogglePopup(captured); };
         }
 
+        private static bool Matches(string text, string title, string name)
+        {
+            string t = (text ?? string.Empty).Trim();
+            if (t.Length == 0) return true;
+            return title.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0 || (name != null && name.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static void LoadStars()
+        {
+            if (_starOff == null) _starOff = ModPaths.LoadIcon("Star.png");
+            if (_starOn == null) _starOn = ModPaths.LoadIcon("StarOn.png");
+        }
+
+        /// <summary>
+        /// The list is virtual: a search box, MaxPopupRows pooled rows and a scroll bar. The popup is a child of the
+        /// section it belongs to and is created last in it, so it is drawn above the controls below its button.
+        /// </summary>
         private void BuildPopup(PickerUi ui)
         {
+            LoadStars();
             float top = ui.Header.relativePosition.y + ui.Header.height + 2f;
 
-            UIScrollablePanel popup = ui.Parent.AddUIComponent<UIScrollablePanel>();
+            UIPanel popup = ui.Parent.AddUIComponent<UIPanel>();
             popup.width = PanelWidth - 20f;
-            popup.height = 200f;
+            popup.height = ListTop + MaxPopupRows * RowStride + 6f;
             popup.relativePosition = new Vector3(10f, top);
             popup.backgroundSprite = "MenuPanel2";
-            popup.autoLayout = true;
-            popup.autoLayoutDirection = LayoutDirection.Vertical;
-            popup.autoLayoutPadding = new RectOffset(0, 0, 0, 2);
-            popup.clipChildren = true;
-            popup.scrollWheelDirection = UIOrientation.Vertical;
-            PickerUi wheelUi = ui;
-            popup.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(wheelUi, e); };
+            PickerUi wheelPopup = ui;
+            popup.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(wheelPopup, e); };
             popup.isVisible = false;
             ui.Popup = popup;
 
-            UIScrollbar bar = ui.Parent.AddUIComponent<UIScrollbar>();
+            PickerUi captured = ui;
+            ui.Search = MakeTextBox(popup, 6f, 5f, popup.width - 12f, Loc.T("search_tip"), delegate (string t)
+            {
+                if (_openPopup == captured) ApplyFilter(captured, true);
+            });
+
+            for (int i = 0; i < MaxPopupRows; i++) CreateRow(ui, i);
+
+            UIScrollbar bar = popup.AddUIComponent<UIScrollbar>();
             bar.width = 12f;
-            bar.height = popup.height;
+            bar.height = MaxPopupRows * RowStride;
             bar.orientation = UIOrientation.Vertical;
             bar.pivot = UIPivotPoint.TopLeft;
-            bar.relativePosition = new Vector3(popup.relativePosition.x + popup.width - 12f, top);
+            bar.relativePosition = new Vector3(popup.width - 16f, ListTop);
             bar.minValue = 0f;
+            bar.maxValue = MaxPopupRows;
+            bar.scrollSize = MaxPopupRows;
+            bar.incrementAmount = 1f;
             bar.value = 0f;
-            bar.incrementAmount = 40f;
-            bar.isVisible = false;
 
             UISlicedSprite track = bar.AddUIComponent<UISlicedSprite>();
             track.spriteName = "ScrollbarTrack";
@@ -735,78 +801,158 @@ namespace QuayTools
             thumb.width = 10f;
             bar.thumbObject = thumb;
 
-            popup.verticalScrollbar = bar;
+            bar.eventValueChanged += delegate (UIComponent c, float v)
+            {
+                if (captured.SyncBar) return;
+                captured.Offset = Mathf.RoundToInt(v);
+                RefreshRows(captured);
+            };
+            bar.isVisible = false;
             ui.Bar = bar;
         }
 
-        // ---------- drop-down list ----------
-
-        private void FillPopup(PickerUi ui)
+        private void CreateRow(PickerUi ui, int index)
         {
-            List<UIComponent> old = new List<UIComponent>(ui.Popup.components);
-            for (int i = 0; i < old.Count; i++)
-            {
-                ui.Popup.RemoveUIComponent(old[i]);
-                Destroy(old[i].gameObject);
-            }
+            RowUi r = new RowUi();
+            float w = ui.Popup.width - 8f - 16f;
 
-            AddRow(ui, null);
-
-            List<PickItem> list = ui.GetItems();
-            for (int i = 0; i < list.Count; i++)
-            {
-                AddRow(ui, list[i]);
-            }
-
-            int rows = Mathf.Min(list.Count + 1, MaxPopupRows);
-            ui.Popup.height = rows * (RowHeight + 2f) + 4f;
-            ui.Bar.height = ui.Popup.height;
-        }
-
-        private void AddRow(PickerUi ui, PickItem entry)
-        {
             UIButton row = ui.Popup.AddUIComponent<UIButton>();
-            row.width = ui.Popup.width - 16f;
+            row.width = w;
             row.height = RowHeight;
+            row.relativePosition = new Vector3(4f, ListTop + index * RowStride);
             StyleButton(row);
             row.textScale = 0.8f;
             row.textHorizontalAlignment = UIHorizontalAlignment.Left;
             row.textVerticalAlignment = UIVerticalAlignment.Middle;
             row.textPadding = new RectOffset(46, 0, 0, 0);
+            r.Button = row;
 
-            string title = entry == null ? ui.EmptyText : entry.Title;
-            row.text = title.Length > 34 ? title.Substring(0, 33) + "…" : title;
-            row.tooltip = title;
+            r.Icon = row.AddUIComponent<UISprite>();
+            r.Icon.size = new Vector2(30f, 30f);
+            r.Icon.relativePosition = new Vector3(8f, 3f);
+            r.Icon.isInteractive = false;
+            r.Icon.isVisible = false;
 
-            if (entry != null && entry.Atlas != null && !string.IsNullOrEmpty(entry.Thumb))
-            {
-                UISprite icon = row.AddUIComponent<UISprite>();
-                icon.atlas = entry.Atlas;
-                icon.spriteName = entry.Thumb;
-                icon.size = new Vector2(30f, 30f);
-                icon.relativePosition = new Vector3(8f, 3f);
-                icon.isInteractive = false;
-            }
+            r.StarButton = row.AddUIComponent<UIButton>();
+            r.StarButton.size = new Vector2(26f, 26f);
+            r.StarButton.relativePosition = new Vector3(w - 32f, 5f);
+            r.StarButton.tooltip = Loc.T("star_tip");
+            r.Star = r.StarButton.AddUIComponent<UITextureSprite>();
+            r.Star.size = new Vector2(22f, 22f);
+            r.Star.relativePosition = new Vector3(2f, 2f);
+            r.Star.isInteractive = false;
 
-            PickerUi wheelUi = ui;
-            row.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(wheelUi, e); };
-
-            PickItem picked = entry;
             PickerUi captured = ui;
+            r.StarButton.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                p.Use();
+                if (r.Item == null || string.IsNullOrEmpty(r.Item.Key)) return;
+                Favorites.Toggle(captured.Kind, r.Item.Key);
+                ApplyFilter(captured, false);
+            };
+
+            row.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(captured, e); };
+            r.StarButton.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(captured, e); };
             row.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
             {
+                PickItem picked = r.Empty ? null : r.Item;
                 SetHeaderItem(captured, picked);
                 ClosePopup();
                 if (!_loading) captured.OnPicked(picked);
             };
+
+            ui.Rows.Add(r);
         }
 
-        private static void OnPopupWheel(PickerUi ui, UIMouseEventParameter e)
+        /// <summary>Rebuilds the list for the current search text: favourites first, then the rest (the empty row only without a search).</summary>
+        private void ApplyFilter(PickerUi ui, bool resetOffset)
         {
-            float content = ui.Popup.components.Count * (RowHeight + 2f) + 4f;
-            float max = Mathf.Max(0f, content - ui.Popup.height);
-            float y = Mathf.Clamp(ui.Popup.scrollPosition.y - e.wheelDelta * (RowHeight + 2f), 0f, max);
-            ui.Popup.scrollPosition = new Vector2(0f, y);
+            List<PickItem> list = ui.GetItems(ui.Search.text);
+            List<PickItem> favs = new List<PickItem>(), rest = new List<PickItem>();
+            for (int i = 0; i < list.Count; i++)
+            {
+                list[i].Fav = Favorites.Is(ui.Kind, list[i].Key);
+                if (list[i].Fav) favs.Add(list[i]); else rest.Add(list[i]);
+            }
+
+            ui.Entries.Clear();
+            if (string.IsNullOrEmpty(ui.Search.text.Trim())) ui.Entries.Add(null);
+            ui.Entries.AddRange(favs);
+            ui.Entries.AddRange(rest);
+
+            int total = ui.Entries.Count;
+            int visible = Mathf.Min(MaxPopupRows, total);
+            int maxOffset = Mathf.Max(0, total - MaxPopupRows);
+            ui.Offset = resetOffset ? 0 : Mathf.Clamp(ui.Offset, 0, maxOffset);
+
+            ui.Popup.height = ListTop + Mathf.Max(visible, 1) * RowStride + 6f;
+            ui.SyncBar = true;
+            ui.Bar.minValue = 0f;
+            ui.Bar.maxValue = Mathf.Max(total, MaxPopupRows);
+            ui.Bar.scrollSize = MaxPopupRows;
+            ui.Bar.height = Mathf.Max(visible, 1) * RowStride;
+            if (ui.Bar.trackObject != null) ui.Bar.trackObject.height = ui.Bar.height;
+            ui.Bar.value = ui.Offset;
+            ui.Bar.isVisible = total > MaxPopupRows;
+            ui.SyncBar = false;
+
+            RefreshRows(ui);
+            UpdateHeight();
+        }
+
+        private static string Shorten(string title)
+        {
+            return title.Length > 30 ? title.Substring(0, 29) + "…" : title;
+        }
+
+        private void RefreshRows(PickerUi ui)
+        {
+            for (int i = 0; i < ui.Rows.Count; i++)
+            {
+                RowUi r = ui.Rows[i];
+                int index = ui.Offset + i;
+                if (index >= ui.Entries.Count)
+                {
+                    r.Button.isVisible = false;
+                    r.Item = null;
+                    continue;
+                }
+
+                PickItem it = ui.Entries[index];
+                r.Item = it;
+                r.Empty = it == null;
+                r.Button.isVisible = true;
+
+                string title = it == null ? ui.EmptyText : it.Title;
+                r.Button.text = Shorten(title);
+                r.Button.tooltip = title;
+
+                bool icon = it != null && it.Atlas != null && !string.IsNullOrEmpty(it.Thumb);
+                if (icon)
+                {
+                    r.Icon.atlas = it.Atlas;
+                    r.Icon.spriteName = it.Thumb;
+                }
+                r.Icon.isVisible = icon;
+
+                Texture2D star = it != null && it.Fav ? _starOn : _starOff;
+                r.StarButton.isVisible = it != null && !string.IsNullOrEmpty(it.Key) && star != null;
+                if (star != null) r.Star.texture = star;
+            }
+        }
+
+        private void OnPopupWheel(PickerUi ui, UIMouseEventParameter e)
+        {
+            int maxOffset = Mathf.Max(0, ui.Entries.Count - MaxPopupRows);
+            if (maxOffset > 0)
+            {
+                int step = e.wheelDelta > 0f ? -2 : 2;
+                ui.Offset = Mathf.Clamp(ui.Offset + step, 0, maxOffset);
+                ui.SyncBar = true;
+                ui.Bar.value = ui.Offset;
+                ui.SyncBar = false;
+                RefreshRows(ui);
+            }
             e.Use();
         }
 
@@ -819,12 +965,15 @@ namespace QuayTools
             }
 
             ClosePopup();
-            FillPopup(ui);
-            ui.Popup.isVisible = true;
-            ui.Bar.isVisible = true;
-            ui.Popup.BringToFront();
-            ui.Bar.BringToFront();
+            ui.Search.text = string.Empty;
             _openPopup = ui;
+            ui.Popup.isVisible = true;
+            ApplyFilter(ui, true);
+
+            // the whole section (and the list inside it) is drawn above the undo / redo / reset bar
+            ui.Parent.BringToFront();
+            ui.Popup.BringToFront();
+            ui.Search.Focus();
             UpdateHeight();
         }
 
@@ -833,7 +982,9 @@ namespace QuayTools
             if (_openPopup == null) return;
             _openPopup.Popup.isVisible = false;
             _openPopup.Bar.isVisible = false;
+            _openPopup.Search.Unfocus();
             _openPopup = null;
+            if (_bar != null) _bar.BringToFront();
             UpdateHeight();
         }
 
@@ -1003,8 +1154,10 @@ namespace QuayTools
                 _landUi.S1V.text = FormatOffset(s.LandEnd);
                 _waterUi.S0V.text = FormatOffset(s.WaterStart);
                 _waterUi.S1V.text = FormatOffset(s.WaterEnd);
-                _landUi.ScaleV.text = s.LandScale + " %";
-                _waterUi.ScaleV.text = s.WaterScale + " %";
+                _landUi.ScaleV.text = s.LandScale.ToString();
+                _waterUi.ScaleV.text = s.WaterScale.ToString();
+                SetToggle(_landUi.Flip, s.LandFlip);
+                SetToggle(_waterUi.Flip, s.WaterFlip);
                 SetToggle(_detachStart, s.DetachStart);
                 SetToggle(_detachEnd, s.DetachEnd);
             }
@@ -1028,6 +1181,7 @@ namespace QuayTools
                 blocks[i].S0.isEnabled = enabled;
                 blocks[i].S1.isEnabled = enabled;
                 blocks[i].Scale.isEnabled = enabled;
+                blocks[i].Flip.Button.isEnabled = enabled;
             }
             _detachStart.Button.isEnabled = enabled;
             _detachEnd.Button.isEnabled = enabled;
@@ -1105,7 +1259,7 @@ namespace QuayTools
             bool lockMode = _lock != null && _lock.isVisible;
             bool select = addMode || decalMode || propMode || lockMode;
 
-            float section = addMode ? _addHeight : decalMode ? _decalHeight : propMode ? _propHeight : lockMode ? _lockHeight : 0f;
+            float section = addMode ? (_advOpen ? Mathf.Max(_addHeight, _advHeight) : _addHeight) : decalMode ? _decalHeight : propMode ? _propHeight : lockMode ? _lockHeight : 0f;
             float barY = ContentTop + section;
             float need = select ? barY + 42f + 24f : ContentTop + 30f;
 
@@ -1132,8 +1286,8 @@ namespace QuayTools
             UISlider sl = MakeSlider(parent, 12f, y + 20f, PanelWidth - 24f, min, max, reset);
             UITextField fl = null;
             MakeLabel(parent, Loc.T(labelKey), 12f, y, 0.72f);
-            MakeLabel(parent, Loc.T("meter").Trim(), PanelWidth - 26f, y + 1f, 0.72f);
-            fl = MakeField(parent, PanelWidth - 94f, y - 1f, delegate (float m) { OnFieldFor(sl, fl, m); }, max * FenceStore.Unit);
+            MakeLabel(parent, Loc.T("meter").Trim(), PanelWidth - 24f, y + 21f, 0.72f);
+            fl = MakeField(parent, PanelWidth - 92f, y + 19f, delegate (float m) { OnFieldFor(sl, fl, m); }, Mathf.Max(Mathf.Abs(min), Mathf.Abs(max)) * FenceStore.Unit);
             fl.text = FormatOffset(reset);
 
             UITextField flCaptured = fl;
@@ -1164,17 +1318,20 @@ namespace QuayTools
             _decalUi = new PickerUi();
             _decalUi.Parent = _decal;
             _decalUi.EmptyText = Loc.T("decal_solid");
-            _decalUi.GetItems = delegate ()
+            _decalUi.Kind = Favorites.Decals;
+            _decalUi.GetItems = delegate (string text)
             {
                 List<PickItem> items = new List<PickItem>();
                 List<DecalEntry> list = DecalCatalog.Entries;
                 for (int i = 0; i < list.Count; i++)
                 {
+                    if (!Matches(text, list[i].Title, list[i].Info.name)) continue;
                     PickItem it = new PickItem();
                     it.Title = list[i].Title;
                     it.Atlas = list[i].Info.m_Atlas;
                     it.Thumb = list[i].Info.m_Thumbnail;
                     it.Tag = list[i];
+                    it.Key = list[i].Info.name;
                     items.Add(it);
                 }
                 return items;
@@ -1662,23 +1819,23 @@ namespace QuayTools
 
             MakeLabel(_prop, Loc.T("prop_choose"), 12f, y, 0.85f);
             y += 20f;
-            _propSearch = MakeTextBox(_prop, 10f, y, PanelWidth - 20f, Loc.T("prop_search_tip"), OnPropSearch);
-            y += 26f;
 
             _propUi = new PickerUi();
             _propUi.Parent = _prop;
             _propUi.EmptyText = Loc.T("prop_none");
-            _propUi.GetItems = delegate ()
+            _propUi.Kind = Favorites.Props;
+            _propUi.GetItems = delegate (string text)
             {
                 List<PickItem> items = new List<PickItem>();
-                List<PropCatalogEntry> list = PropCatalog.Search(_propSearch == null ? string.Empty : _propSearch.text);
+                List<PropCatalogEntry> list = PropCatalog.Search(text);
                 for (int i = 0; i < list.Count; i++)
                 {
                     PickItem it = new PickItem();
                     it.Title = list[i].Title;
-                    it.Atlas = list[i].Info.m_Atlas;
-                    it.Thumb = list[i].Info.m_Thumbnail;
+                    it.Atlas = list[i].Info != null ? list[i].Info.m_Atlas : list[i].Tree.m_Atlas;
+                    it.Thumb = list[i].Info != null ? list[i].Info.m_Thumbnail : list[i].Tree.m_Thumbnail;
                     it.Tag = list[i];
+                    it.Key = list[i].Key;
                     items.Add(it);
                 }
                 return items;
@@ -1689,17 +1846,17 @@ namespace QuayTools
 
             y = MakeValueRow(_prop, y, "pstep", PropEntry.StepMin, PropEntry.StepMax, PropEntry.StepDefault, out _pStep, out _pStepV,
                 delegate (int u) { OnPropValue("step", delegate (PropEntry e) { e.Step = u; }); });
-            y = MakeValueRow(_prop, y, "pstart", -PropEntry.MaxShift, PropEntry.MaxShift, 0f, out _pStart, out _pStartV,
+            y = MakeValueRow(_prop, y, "pstart", -PropEntry.MaxShift, 0f, 0f, out _pStart, out _pStartV,
                 delegate (int u) { OnPropValue("start", delegate (PropEntry e) { e.StartShift = u; }); });
-            y = MakeValueRow(_prop, y, "pend", -PropEntry.MaxShift, PropEntry.MaxShift, 0f, out _pEnd, out _pEndV,
+            y = MakeValueRow(_prop, y, "pend", -PropEntry.MaxShift, 0f, 0f, out _pEnd, out _pEndV,
                 delegate (int u) { OnPropValue("end", delegate (PropEntry e) { e.EndShift = u; }); });
             float leftBottom = y;
 
             // ---- right column: position across and up, rotation, size, switches
             float y2 = 0f;
-            y2 = MakeValueRow(_propRight, y2, "plateral", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _pLateral, out _pLateralV,
+            y2 = MakeValueRow(_propRight, y2, "plateral", -PropEntry.MaxOffset, PropEntry.MaxOffset, 0f, out _pLateral, out _pLateralV,
                 delegate (int u) { OnPropValue("lateral", delegate (PropEntry e) { e.Lateral = u; }); });
-            y2 = MakeValueRow(_propRight, y2, "plift", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _pLift, out _pLiftV,
+            y2 = MakeValueRow(_propRight, y2, "plift", -PropEntry.MaxOffset, PropEntry.MaxOffset, 0f, out _pLift, out _pLiftV,
                 delegate (int u) { OnPropValue("lift", delegate (PropEntry e) { e.Lift = u; }); });
             y2 = MakeIntRow(_propRight, y2, "pangle", 0, 359, 0, " °", out _pAngle, out _pAngleV,
                 delegate (int u) { OnPropValue("angle", delegate (PropEntry e) { e.Angle = u; }); });
@@ -1710,9 +1867,6 @@ namespace QuayTools
                 delegate (int u) { OnPropValue("scale", delegate (PropEntry e) { e.Scale = u; }); });
             y2 = MakeIntRow(_propRight, y2, "prandscale", 0, PropEntry.RandomMax, 0, " %", out _pRand, out _pRandV,
                 delegate (int u) { OnPropValue("rand", delegate (PropEntry e) { e.ScaleRandom = u; }); });
-            _pEnabled = MakeToggle(_propRight, 10f, y2, PanelWidth - 20f, "penabled", null,
-                delegate (bool v) { OnPropValue("enabled", delegate (PropEntry e) { e.Enabled = v; }); });
-            y2 += 38f;
 
             _propRemove = _propRight.AddUIComponent<UIButton>();
             _propRemove.width = PanelWidth - 20f;
@@ -1762,17 +1916,9 @@ namespace QuayTools
 
         private void OnPropPicked(PickItem item)
         {
-            string name = item == null ? null : ((PropCatalogEntry)item.Tag).Info.name;
+            string name = item == null ? null : ((PropCatalogEntry)item.Tag).Key;
             QuayTool tool = QuayTool.Instance;
             if (tool != null) tool.EditPropEntry(_propIndex, "prop", delegate (PropEntry e) { e.Prop = name; });
-        }
-
-        /// <summary>The search text changed: open the list (or refill it) with the matching props.</summary>
-        private void OnPropSearch(string text)
-        {
-            if (_loading || _propUi == null || _propUi.Popup == null) return;
-            if (_openPopup == _propUi) FillPopup(_propUi);
-            else TogglePopup(_propUi);
         }
 
         private void StepProp(int direction)
@@ -1793,17 +1939,18 @@ namespace QuayTools
                 return;
             }
 
-            PropInfo info = PropCatalog.Find(name);
+            PropInfo info;
+            TreeInfo tree;
             PickItem item = new PickItem();
-            if (info == null)
+            if (!PropCatalog.Resolve(name, out info, out tree))
             {
                 item.Title = name + Loc.T("missing");
             }
             else
             {
-                item.Title = PropCatalog.TitleOf(info);
-                item.Atlas = info.m_Atlas;
-                item.Thumb = info.m_Thumbnail;
+                item.Title = PropCatalog.TitleOfKey(name);
+                item.Atlas = info != null ? info.m_Atlas : tree.m_Atlas;
+                item.Thumb = info != null ? info.m_Thumbnail : tree.m_Thumbnail;
             }
             SetHeaderItem(_propUi, item);
         }
@@ -1852,11 +1999,10 @@ namespace QuayTools
                 _pEndV.text = FormatOffset(_pEnd.value);
                 _pLateralV.text = FormatOffset(_pLateral.value);
                 _pLiftV.text = FormatOffset(_pLift.value);
-                _pAngleV.text = e.Angle + " °";
-                _pScaleV.text = e.Scale + " %";
-                _pRandV.text = e.ScaleRandom + " %";
+                _pAngleV.text = e.Angle.ToString();
+                _pScaleV.text = e.Scale.ToString();
+                _pRandV.text = e.ScaleRandom.ToString();
                 SetToggle(_pRotate, e.RandomRotation);
-                SetToggle(_pEnabled, e.Enabled);
                 ShowPropHeader(e.Prop);
 
                 bool any = count > 0, has = _propCount > 0;
@@ -1866,11 +2012,9 @@ namespace QuayTools
                 _propRemove.isEnabled = has;
                 _propClear.isEnabled = has;
                 _propUi.Header.isEnabled = has;
-                _propSearch.isEnabled = has;
                 UISlider[] sliders = { _pStep, _pStart, _pEnd, _pLateral, _pLift, _pAngle, _pScale, _pRand };
                 for (int i = 0; i < sliders.Length; i++) sliders[i].isEnabled = has;
                 _pRotate.Button.isEnabled = has;
-                _pEnabled.Button.isEnabled = has;
                 if (_resetBtn != null) _resetBtn.isEnabled = false;
 
                 _propState.text = Loc.F("prop_state", have, count);
@@ -1965,7 +2109,8 @@ namespace QuayTools
                 UITextField[] fields =
                 {
                     _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dHex,
-                    _landUi.S0V, _landUi.S1V, _waterUi.S0V, _waterUi.S1V, _propSearch, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV
+                    _landUi.S0V, _landUi.S1V, _waterUi.S0V, _waterUi.S1V, _landUi.ScaleV, _waterUi.ScaleV, _pAngleV, _pScaleV, _pRandV,
+                    _landUi.Search, _waterUi.Search, _decalUi.Search, _propUi.Search, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV
                 };
                 for (int i = 0; i < fields.Length; i++)
                 {

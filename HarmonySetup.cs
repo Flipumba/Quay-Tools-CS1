@@ -40,6 +40,8 @@ namespace QuayTools
                         }
                     }
 
+                    PedestrianPathPatch.Apply(harmony);
+
                     Debug.Log("[QuayTools] Harmony patches applied: " + ok + " ok, " + failed + " failed");
                 });
             }

@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.4.0**
+**Version: v0.4.1**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -40,14 +40,16 @@ Adds fence/wall networks along the full length of quay segments.
    - **Model 2** — water side.
    - The default entry is **Empty**.
 4. Tune the offsets for each model:
-   - **Horizontal offset** — slider up to ±100 m (0.1 m per step) or type a value in the field next to it. 0 places the fence at the edge of the quay lanes; positive values move it towards the water, negative towards the land.
+   - **Horizontal offset** — slider up to ±50 m (0.1 m per step) or type a value in the field next to it. 0 places the fence at the edge of the quay lanes; positive values move it towards the water, negative towards the land.
    - **Vertical offset** — same range.
-   - Double-click a slider to reset it. The drop-down lists scroll with the mouse wheel.
+   - Double-click a slider to reset it.
+   - **Drop-down lists** (models, decals, props) have a **search field** (type part of a name), scroll with the mouse wheel or the scroll bar, and show every item. Click the **star** at the right of an item to make it a **favourite**: favourites are listed first (kept in the mod settings, for all savegames). The list opens above the Undo / Redo / Reset bar.
 5. Optional: **Close fence at segment start / end** — a straight fence across the quay, at right angles, at a dead end of the segment (the start is marked with a cyan ring, the end with a magenta ring). Each end is set separately, per segment.
 6. **Extra: fence ends, scale, detach >>** opens a second column of the window:
-   - **Fence start / end along the quay** (per model, ±50 m): moves the two ends of the fence along the quay. Positive extends the fence beyond the end of the segment, negative trims it.
-   - **Width (thickness) scale** (per model, 10–500 %): scales the fence model across the quay. The height of a fence model cannot be scaled (the game's net shader takes it from the model).
-   - **Detach fences at segment start / end**: the fence is no longer joined to the neighbouring segment at that end, so the segment can be set up on its own (offsets, heights, shifts). One flag on either of the two segments is enough to detach the joint. Shifting a fence end detaches it automatically.
+   - **Fence start / end trim** (per model, 0 to −50 m): shortens the fence from either end. 0 (the right end of the slider, the default) is the full length of the segment; a fence cannot be extended beyond the segment.
+   - **Width (thickness) scale** (per model, 10–500 %, slider or typed value): scales the fence model across the quay. The height of a fence model cannot be scaled (the game's net shader takes it from the model).
+   - **Flip model** (per model): turns the model to face the other side (the model is mirrored across its axis).
+   - **Detach fences at segment start / end**: the fence is no longer joined to the neighbouring segment at that end, so the segment can be set up on its own (offsets, heights, shifts). One flag on either of the two segments is enough to detach the joint. Trimming a fence end detaches it automatically.
 7. Close the tool when finished.
 
 To remove models, select the segments and press **Remove models** under the settings.
@@ -65,7 +67,7 @@ Lays a ground decal (any decal prop you have: Workshop decals, cobblestones, mar
 1. Select the **Add decal path** mode. The selection is shared with the network-model mode.
 2. Select quay segments (**Shift** selects the whole connected quay).
 3. Choose a **decal** in the drop-down list (the first entry, *Plain colour*, draws a simple coloured strip).
-4. The strip is a **mask**: set its **width** (0.1–50 m), an optional **sideways shift** (+ moves toward the water, so it is the same side on every segment) and a **vertical offset** (±100 m). The decal is cropped by the mask.
+4. The strip is a **mask**: set its **width** (0.1–50 m), an optional **sideways shift** (+ moves toward the water, so it is the same side on every segment) and a **vertical offset** (±50 m). The decal is cropped by the mask.
 5. **Decal scale** is the width of one tile of the decal texture (choosing a decal sets its natural size). The texture is repeated along and across the mask in tiles of this size, centred on the middle of the path.
 6. Set the **tint** with the R, G, B and A sliders (0–255) or type a hex value (`#RRGGBB` or `#RRGGBBAA`) into the field next to the preview. It multiplies the colours of the decal (white = original colours; lower values darken it, lower A makes it more transparent) or fills the plain strip. Double click a slider to reset it to 255.
 7. Press **Add / apply path**. **Remove path** removes it from the selected segments.
@@ -96,25 +98,24 @@ Makes citizens stop using a quay as a footpath.
 
 1. Select the **Remove pedestrian path** tool (crossed-out pedestrian icon), select quay segments (**Shift**: whole connected quay).
 2. Press **Remove pedestrian path on selected**. The segments are marked red; the pathfinder skips them, so pedestrians neither route over them nor see them as a path. **Restore pedestrian path on selected** undoes it.
-3. Citizens already walking along such a segment finish their current walk. Vehicle paths are blocked on these segments too, so use it only on pedestrian quays.
+3. Citizens already walking along such a segment finish their current walk; new walking paths avoid it. Only walking paths are blocked (pedestrian lanes without vehicle lanes), vehicles still drive on the segment.
 
-Implemented with a Harmony patch on `PathFind.ProcessItem`; if a game update changes that method the feature is simply unavailable and a line is written to the log. Saved in the savegame (`QuayTools.NoPeds`).
+Implemented with Harmony patches on the `PathFind.ProcessItem*` methods that receive a segment id; they are found by reflection and listed in the log (`Pedestrian block: patched N PathFind method(s)`). If a game update changes them the feature is simply unavailable. Saved in the savegame (`QuayTools.NoPeds`).
 
 ### Props-line
 
 Places props along quay segments at a fixed step (lamps, trees, benches, bollards, ...). Any non-decal prop you have can be used. The props are decoration only.
 
 1. Select the **Props-line** tool. Select quay segments (**Shift**: whole connected quay).
-2. Press **+ Add prop line**. A line is added to every selected segment; use **< >** to switch between the lines of the selection. The list is unlimited.
-3. Choose the prop in the drop-down list (type part of a name in the search field above it) and tune the line:
-   - **Step between props** (0.5–500 m).
-   - **Line start / end** (±50 m): positive extends the line beyond the end of the segment, negative trims it.
-   - **Shift forward / back across the quay** (+ toward the water) and **height** (±100 m).
+2. Press **+ Add prop line**. A line is added to every selected segment; use **< >** to switch between the lines of the selection.
+3. Choose the prop or **tree** (trees are marked `[tree]`) in the drop-down list (search field and favourites inside the list) and tune the line:
+   - **Step between props** (0.5–50 m).
+   - **Line start / end trim** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve), so props also stand on the nodes. The props are counted from the start of the line; trimming one end only removes props and never moves the others.
+   - **Shift forward / back across the quay** (+ toward the water) and **height** (±50 m).
    - **Rotation of the props**, **Random rotation** (for trees), **Prop scale** (5–1000 %) and **Random size variation**.
-   - **Line enabled** switches a line off without removing it.
 4. **Remove this line** / **Remove all lines** delete lines from the selected segments.
 
-Changes apply to the same line number on all selected segments. The lines follow the curves and heights of the quay like decal paths do. Props-line data is saved in the savegame (`QuayTools.PropLines`). If a prop asset is missing when a save is loaded, that line is not drawn (a line in the log says so).
+Changes apply to the same line number on all selected segments. The lines follow the curves and heights of the quay like decal paths do. Where only one of two neighbouring segments has a line, only its half of the node is covered. Trees are drawn through the game's tree renderer (no rotation). Props-line data is saved in the savegame (`QuayTools.PropLines`). If a prop asset is missing when a save is loaded, that line is not drawn (a line in the log says so).
 
 ### Edited segment markers
 
@@ -212,10 +213,19 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 ## Compatibility and status
 
 - The current version has been tested in-game. Please report problems together with `output_log.txt` (lines starting with `[QuayTools]`).
-- Game APIs used: `QuayAI`, `ToolBase` (`OnEnable`, `OnDisable`, `OnToolUpdate`, `RenderOverlay`), `OverlayEffect.DrawBezier`, `NetSegment.CalculateCorner`, `NetNode.GetEndFences`, `PrefabCollection<NetInfo>`, `SerializableDataExtensionBase`, cs UI components (`UISlider`, `UIScrollablePanel`, ...).
+- Game APIs used: `QuayAI`, `ToolBase` (`OnEnable`, `OnDisable`, `OnToolUpdate`, `RenderOverlay`), `OverlayEffect.DrawBezier`, `NetSegment.CalculateCorner`, `NetNode.GetEndFences`, `PrefabCollection<NetInfo>`, `SerializableDataExtensionBase`, cs UI components (`UISlider`, `UIScrollbar`, ...).
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.4.1
+- The drop-down lists (models, decals, props) show **all** items (the prop list was cut off at 60 entries), have a **search field**, and a **star** per item for **favourites** (listed first, kept in the mod settings). The lists open above the Undo / Redo / Reset bar.
+- **Width scale** of fence models (and rotation, prop scale, random size) can be typed in a field next to the slider.
+- Fence and prop-line **ends can only be trimmed**: sliders run from −50 m to 0 (0 = full length, the default). Saved positive shifts become 0.
+- Props-line: the line now runs from the middle of the start node to the middle of the end node and follows the node's bend and height; trimming the start never moves the other props (and vice versa). The **Line enabled** switch is gone. **Trees** can be placed too. Step is limited to 50 m.
+- Horizontal / vertical offsets of fences, decal paths and prop lines are limited to ±50 m.
+- New: **Flip model** for fence models (mirrors the model so it faces the other side).
+- **Remove pedestrian path** reworked: the pathfinder patch now targets the `PathFind.ProcessItem*` methods that exist in the game and only blocks walking paths, so vehicles keep driving on the segment. The methods found are listed in the log.
 
 ### v0.4.0
 - Edited segments are highlighted and marked with tool icons while the tool is active (mod option to switch it off).

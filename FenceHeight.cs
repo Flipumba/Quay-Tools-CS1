@@ -132,6 +132,14 @@ namespace QuayTools
                 B[i] = P[i] - n * hw;
             }
 
+            if (FenceStore.IsFlipped(segmentId, geometricRight))
+            {
+                // the model faces the other side: mirror the ribbon across its own axis
+                Vector3[] swap = A;
+                A = B;
+                B = swap;
+            }
+
             float vScale = fenceInfo.m_netAI.GetVScale();
             data.m_dataMatrix0 = NetSegment.CalculateControlMatrix(A[0], A[1], A[2], A[3], B[0], B[1], B[2], B[3], data.m_position, vScale);
             data.m_dataMatrix1 = NetSegment.CalculateControlMatrix(B[0], B[1], B[2], B[3], A[0], A[1], A[2], A[3], data.m_position, vScale);
@@ -172,7 +180,7 @@ namespace QuayTools
         }
 
         /// <summary>The part of the cubic between the parameters t0 and t1.</summary>
-        private static Vector3[] SubCubic(Vector3[] P, float t0, float t1)
+        internal static Vector3[] SubCubic(Vector3[] P, float t0, float t1)
         {
             Vector3[] a, b, c, d;
             SplitCubic(P, t1, out a, out b); // a = [0, t1]
@@ -317,6 +325,15 @@ namespace QuayTools
             Vector3 p17 = p4 + n12 * hw;
             Vector3 p18 = p5 + n14 * hw;
             Vector3 p19 = p5 - n14 * hw;
+
+            if (FenceStore.IsFlipped(seg1, right1))
+            {
+                Vector3 t16 = p16, t18 = p18;
+                p16 = p17;
+                p17 = t16;
+                p18 = p19;
+                p19 = t18;
+            }
 
             Vector3 m20 = Vector3.zero, m21 = Vector3.zero, m22 = Vector3.zero, m23 = Vector3.zero;
             NetSegment.CalculateMiddlePoints(p16, -p6, p18, -p7, true, true, out m20, out m21);

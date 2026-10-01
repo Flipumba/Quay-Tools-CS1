@@ -11,8 +11,8 @@ namespace QuayTools
         public int LandH, LandV, WaterH, WaterV; // slider units, see FenceStore.Unit
         public bool CapStart, CapEnd; // straight closing fence at the start / end of the segment (dead ends)
 
-        // Shifts of the two fence ends along the quay (units of 0.1 m). Positive extends the fence beyond the end of
-        // the segment, negative trims it.
+        // Trim of the two fence ends along the quay (units of 0.1 m): 0 = the fence has the full length of the segment,
+        // negative = shortened by that much (never positive: a fence cannot be extended).
         public int LandStart, LandEnd, WaterStart, WaterEnd;
 
         // Width (thickness) scale of each fence model, percent.
@@ -20,6 +20,9 @@ namespace QuayTools
 
         // The fence is not joined to the neighbouring segment at this end of the segment.
         public bool DetachStart, DetachEnd;
+
+        // The model is turned to face the other side (the ribbon is mirrored across its own axis).
+        public bool LandFlip, WaterFlip;
 
         /// <summary>The Invert flag of the segment the fence slots currently correspond to (see FenceStore.Reconcile).</summary>
         public bool Inverted;
@@ -37,6 +40,7 @@ namespace QuayTools
             LandStart = LandEnd = WaterStart = WaterEnd = 0;
             LandScale = WaterScale = FenceStore.ScaleDefault;
             DetachStart = DetachEnd = false;
+            LandFlip = WaterFlip = false;
         }
 
         /// <summary>True when nothing but the models themselves is set.</summary>
@@ -44,7 +48,7 @@ namespace QuayTools
         {
             return LandH == 0 && LandV == 0 && WaterH == 0 && WaterV == 0 && !CapStart && !CapEnd &&
                    LandStart == 0 && LandEnd == 0 && WaterStart == 0 && WaterEnd == 0 &&
-                   LandScale == FenceStore.ScaleDefault && WaterScale == FenceStore.ScaleDefault && !DetachStart && !DetachEnd;
+                   LandScale == FenceStore.ScaleDefault && WaterScale == FenceStore.ScaleDefault && !DetachStart && !DetachEnd && !LandFlip && !WaterFlip;
         }
 
         public bool SameAs(FenceSettings o)
@@ -52,7 +56,8 @@ namespace QuayTools
             return o != null && LandH == o.LandH && LandV == o.LandV && WaterH == o.WaterH && WaterV == o.WaterV &&
                    CapStart == o.CapStart && CapEnd == o.CapEnd && Inverted == o.Inverted &&
                    LandStart == o.LandStart && LandEnd == o.LandEnd && WaterStart == o.WaterStart && WaterEnd == o.WaterEnd &&
-                   LandScale == o.LandScale && WaterScale == o.WaterScale && DetachStart == o.DetachStart && DetachEnd == o.DetachEnd;
+                   LandScale == o.LandScale && WaterScale == o.WaterScale && DetachStart == o.DetachStart && DetachEnd == o.DetachEnd &&
+                   LandFlip == o.LandFlip && WaterFlip == o.WaterFlip;
         }
     }
 
@@ -62,15 +67,15 @@ namespace QuayTools
         /// <summary>Metres per slider unit (slider range is +-MaxUnits).</summary>
         public const float Unit = 0.1f;
 
-        /// <summary>Slider/field limit in units: 1000 units = 100 m.</summary>
-        public const int MaxUnits = 1000;
+        /// <summary>Slider/field limit in units: 500 units = 50 m.</summary>
+        public const int MaxUnits = 500;
 
         /// <summary>Limit of the fence end shifts in units: 500 units = 50 m.</summary>
         public const int MaxShift = 500;
 
         public const int ScaleDefault = 100, ScaleMin = 10, ScaleMax = 500; // percent
 
-        private const int FormatVersion = 4;
+        private const int FormatVersion = 5;
         private static readonly Dictionary<ushort, FenceSettings> Map = new Dictionary<ushort, FenceSettings>();
 
         public static bool TryGet(ushort segment, out FenceSettings settings)
@@ -246,8 +251,8 @@ namespace QuayTools
             bool isLand = IsLandSide(segment, geometricRight, s, out ok);
             if (!ok) return false;
 
-            startShift = (isLand ? s.LandStart : s.WaterStart) * Unit;
-            endShift = (isLand ? s.LandEnd : s.WaterEnd) * Unit;
+            startShift = Mathf.Min(0, isLand ? s.LandStart : s.WaterStart) * Unit; // trim only
+            endShift = Mathf.Min(0, isLand ? s.LandEnd : s.WaterEnd) * Unit;
             scaleX = Mathf.Clamp(isLand ? s.LandScale : s.WaterScale, ScaleMin, ScaleMax) / 100f;
             return true;
         }
@@ -267,7 +272,17 @@ namespace QuayTools
             if (!ok) return false;
 
             int shift = atStart ? (isLand ? s.LandStart : s.WaterStart) : (isLand ? s.LandEnd : s.WaterEnd);
-            return shift != 0;
+            return shift < 0;
+        }
+
+        /// <summary>True when the model on the given geometric side of the segment is flipped to face the other way.</summary>
+        public static bool IsFlipped(ushort segment, bool geometricRight)
+        {
+            FenceSettings s;
+            if (!TryGet(segment, out s)) return false;
+            bool ok;
+            bool isLand = IsLandSide(segment, geometricRight, s, out ok);
+            return ok && (isLand ? s.LandFlip : s.WaterFlip);
         }
 
         /// <summary>Corner of a segment end as computed by the game and other mods (no fence offset).</summary>
@@ -357,6 +372,8 @@ namespace QuayTools
                         w.Write(s.WaterScale);
                         w.Write(s.DetachStart);
                         w.Write(s.DetachEnd);
+                        w.Write(s.LandFlip);
+                        w.Write(s.WaterFlip);
                     }
                 }
                 w.Flush();
@@ -410,6 +427,21 @@ namespace QuayTools
                                 s.DetachStart = r.ReadBoolean();
                                 s.DetachEnd = r.ReadBoolean();
                             }
+                            if (version >= 5)
+                            {
+                                s.LandFlip = r.ReadBoolean();
+                                s.WaterFlip = r.ReadBoolean();
+                            }
+
+                            // limits of v0.4.1: offsets +-50 m, ends can only be trimmed
+                            s.LandH = Mathf.Clamp(s.LandH, -MaxUnits, MaxUnits);
+                            s.LandV = Mathf.Clamp(s.LandV, -MaxUnits, MaxUnits);
+                            s.WaterH = Mathf.Clamp(s.WaterH, -MaxUnits, MaxUnits);
+                            s.WaterV = Mathf.Clamp(s.WaterV, -MaxUnits, MaxUnits);
+                            s.LandStart = Mathf.Clamp(s.LandStart, -MaxShift, 0);
+                            s.LandEnd = Mathf.Clamp(s.LandEnd, -MaxShift, 0);
+                            s.WaterStart = Mathf.Clamp(s.WaterStart, -MaxShift, 0);
+                            s.WaterEnd = Mathf.Clamp(s.WaterEnd, -MaxShift, 0);
                             Map[id] = s;
                         }
                     }

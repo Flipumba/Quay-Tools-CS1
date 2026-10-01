@@ -326,7 +326,7 @@ namespace QuayTools
         /// from them exactly like the path of a real segment. Q runs in the travel direction of this path: from the
         /// neighbour to the start of this path, or from the end of this path to the neighbour.
         /// </summary>
-        private static bool BridgeControlPoints(ushort id, ushort nodeId, bool atOwnStart, Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] Q)
+        internal static bool BridgeControlPoints(ushort id, ushort nodeId, bool atOwnStart, Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] Q)
         {
             if (nodeId == 0) return false;
 
@@ -431,7 +431,7 @@ namespace QuayTools
         }
 
         /// <summary>Continues the path across the gaps at the start and/or the end with the bridge curves.</summary>
-        private static void ExtendCurve(Path path, Vector3[] Qs, Vector3[] Qe)
+        internal static void ExtendCurve(Path path, Vector3[] Qs, Vector3[] Qe)
         {
             if (Qs == null && Qe == null) return;
 
