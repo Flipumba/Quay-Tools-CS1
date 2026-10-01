@@ -154,7 +154,8 @@ namespace QuayTools
             Func<object, int> getter;
             if (pathFind == null || !_getters.TryGetValue(pathFind.GetType(), out getter) || getter == null) return false;
             int lanes = getter(pathFind);
-            bool skip = (lanes & PedestrianLane) != 0 && (lanes & VehicleLane) == 0;
+            // any path that may use pedestrian lanes (walking, with public transport, or "any means": 43 = vehicle + pedestrian + transport)
+            bool skip = (lanes & PedestrianLane) != 0;
             if (_diag < 12)
             {
                 _diag++;

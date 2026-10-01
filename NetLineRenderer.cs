@@ -272,14 +272,33 @@ namespace QuayTools
             // One cubic cannot follow a bend, an S-curve or the heights of a long quay (nor the bridged gaps at the nodes),
             // so the line is cut into short pieces, each fitted to the sampled path with the path's own directions
             // at its ends (the game's matrices keep the texture continuous from piece to piece).
-            int pieces = Mathf.Clamp(Mathf.CeilToInt((d1 - d0) / PieceLength), 1, MaxPieces);
-            for (int i = 0; i < pieces; i++)
+            List<float> bounds = new List<float>();
+            bounds.Add(d0);
+            List<float> corners = FindCorners(path, d0, d1, len);
+            bounds.AddRange(corners);
+            bounds.Add(d1);
+
+            int made = 0;
+            for (int sp = 0; sp + 1 < bounds.Count && made < MaxPieces; sp++)
             {
-                float a = d0 + (d1 - d0) * i / pieces;
-                float b = d0 + (d1 - d0) * (i + 1) / pieces;
-                Vector3[] Q = MakeCurve(path, a, b, len);
-                Part part = MakeRibbon(id, index, i, Q, fence, hw, rotated, 1f, true);
-                if (part != null) item.Parts.Add(part);
+                float sa = bounds[sp], sb = bounds[sp + 1];
+                if (sb - sa < 0.05f) continue;
+
+                // pieces of at most PieceLength, and fewer than ~30 degrees of turn in each
+                int n = Mathf.Max(1, Mathf.CeilToInt((sb - sa) / PieceLength));
+                float turn = Vector3.Angle(FlatDir(path, sa, 1, len), FlatDir(path, sb, -1, len));
+                n = Mathf.Max(n, Mathf.CeilToInt(turn / 30f));
+                n = Mathf.Min(n, MaxPieces - made);
+
+                for (int i = 0; i < n; i++)
+                {
+                    float a = sa + (sb - sa) * i / n;
+                    float b = sa + (sb - sa) * (i + 1) / n;
+                    Vector3[] Q = MakeCurve(path, a, b, len, i == 0, i == n - 1);
+                    Part part = MakeRibbon(id, index, made, Q, fence, hw, rotated, 1f, true);
+                    made++;
+                    if (part != null) item.Parts.Add(part);
+                }
             }
 
             if (line.CapStart && cornersOk)
@@ -301,29 +320,69 @@ namespace QuayTools
             }
         }
 
-        /// <summary>One cubic through the part [d0, d1] of the sampled path; the end directions are the path's own (central differences, so neighbouring pieces meet smoothly).</summary>
-        private static Vector3[] MakeCurve(DecalRenderer.Path path, float d0, float d1, float len)
+        /// <summary>Horizontal direction of the path at distance d: side -1 looks back, +1 forward, 0 both ways.</summary>
+        private static Vector3 FlatDir(DecalRenderer.Path path, float d, int side, float len)
         {
-            const float Step = 0.75f;
+            const float Step = 0.6f;
+            Vector3 p, q, l;
+            float lo = side > 0 ? d : Mathf.Max(0f, d - Step);
+            float hi = side < 0 ? d : Mathf.Min(len, d + Step);
+            path.ResetCursor();
+            path.Eval(lo, out p, out l);
+            path.Eval(hi, out q, out l);
+            Vector3 v = q - p;
+            v.y = 0f;
+            return v.sqrMagnitude > 1e-8f ? v.normalized : Vector3.forward;
+        }
+
+        /// <summary>Distances (inside the line) where the path turns sharply, for example at nodes narrowed with Node Controller Renewal: pieces end there instead of being bent around the corner.</summary>
+        private static List<float> FindCorners(DecalRenderer.Path path, float d0, float d1, float len)
+        {
+            List<float> result = new List<float>();
+            const float Probe = 0.5f, Window = 0.8f, Angle = 28f;
+            float best = 0f, bestAt = -1f, last = -100f;
+            for (float d = d0 + 0.4f; d < d1 - 0.4f; d += Probe)
+            {
+                Vector3 p0, p1, p2, l;
+                path.ResetCursor();
+                path.Eval(Mathf.Max(0f, d - Window), out p0, out l);
+                path.Eval(d, out p1, out l);
+                path.Eval(Mathf.Min(len, d + Window), out p2, out l);
+                Vector3 a = p1 - p0, b = p2 - p1;
+                a.y = 0f;
+                b.y = 0f;
+                float ang = a.sqrMagnitude > 1e-6f && b.sqrMagnitude > 1e-6f ? Vector3.Angle(a, b) : 0f;
+
+                if (ang > Angle)
+                {
+                    if (ang > best)
+                    {
+                        best = ang;
+                        bestAt = d;
+                    }
+                }
+                else if (bestAt >= 0f)
+                {
+                    if (bestAt - last > 1.2f) result.Add(bestAt);
+                    if (bestAt - last > 1.2f) last = bestAt;
+                    best = 0f;
+                    bestAt = -1f;
+                }
+            }
+            if (bestAt >= 0f && bestAt - last > 1.2f && bestAt < d1 - 0.4f) result.Add(bestAt);
+            return result;
+        }
+
+        /// <summary>One cubic through the part [d0, d1] of the sampled path. The end directions are the path's own: central at a joint between two pieces, one-sided at the ends of the line and at sharp corners.</summary>
+        private static Vector3[] MakeCurve(DecalRenderer.Path path, float d0, float d1, float len, bool hardStart, bool hardEnd)
+        {
             Vector3 p0, p3, l;
-            Vector3 u0, u1, v0, v1;
-
             path.ResetCursor();
-            path.Eval(Mathf.Max(0f, d0 - Step), out u0, out l);
             path.Eval(d0, out p0, out l);
-            path.Eval(Mathf.Min(len, d0 + Step), out u1, out l);
-            Vector3 dirA = u1 - u0;
-
-            path.ResetCursor();
-            path.Eval(Mathf.Max(0f, d1 - Step), out v0, out l);
             path.Eval(d1, out p3, out l);
-            path.Eval(Mathf.Min(len, d1 + Step), out v1, out l);
-            Vector3 dirB = v1 - v0;
 
-            dirA = dirA.sqrMagnitude > 1e-8f ? dirA.normalized : (p3 - p0);
-            if (dirA.sqrMagnitude < 1e-8f) dirA = Vector3.forward;
-            dirA.Normalize();
-            dirB = dirB.sqrMagnitude > 1e-8f ? dirB.normalized : dirA;
+            Vector3 dirA = FlatDir(path, d0, hardStart ? 1 : 0, len);
+            Vector3 dirB = FlatDir(path, d1, hardEnd ? -1 : 0, len);
 
             Vector3 m1, m2;
             NetSegment.CalculateMiddlePoints(p0, dirA, p3, -dirB, false, false, out m1, out m2);

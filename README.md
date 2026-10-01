@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.5.3**
+**Version: v0.5.4**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -202,6 +202,10 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.5.4
+- Fixed: network-model lines twisted at sharp corners (nodes narrowed with Node Controller Renewal): pieces now end exactly at sharp turns and use one-sided directions there, and no piece turns more than about 30 degrees.
+- Fixed: "Remove pedestrian path" did not stop "any means" paths (walking combined with vehicles or transport, lane types 43 in the log): every path that may use pedestrian lanes now skips blocked segments.
 
 ### v0.5.3
 - Fixed: network-model lines did not follow the quay (bends, S-curves, heights): a line is now built from short pieces fitted to the real path of the quay (including the bridged gaps at nodes), instead of one curve per segment.
