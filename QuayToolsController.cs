@@ -17,15 +17,9 @@ namespace QuayTools
         private float _messageTime = -100f;
         private GUIStyle _style;
 
-        private const float OrientationCheckSeconds = 0.3f;
-        private float _orientationTimer;
-        private volatile bool _reconcilePending;
-        private readonly List<ushort> _mismatch = new List<ushort>();
-
         private void Update()
         {
             FenceHeight.Drain();
-            CheckOrientation();
             if (!Settings.QuickFlipEnabled) return;
             if (!Input.GetKeyDown(Settings.Hotkey)) return;
             if (!IsCtrlHeld()) return;
@@ -40,43 +34,6 @@ namespace QuayTools
 
             bool wholeChain = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
             SegmentFlipper.RequestFlip(segmentId, wholeChain, ShowMessage);
-        }
-
-        /// <summary>
-        /// The game (or another mod) can flip the orientation of a segment by itself, for example while nodes are moved.
-        /// Fences we placed then have to change slots to stay on their land/water side.
-        /// </summary>
-        private void CheckOrientation()
-        {
-            _orientationTimer -= Time.unscaledDeltaTime;
-            if (_orientationTimer > 0f || _reconcilePending) return;
-            _orientationTimer = OrientationCheckSeconds;
-
-            FenceStore.FindMismatches(_mismatch);
-            if (_mismatch.Count == 0) return;
-
-            List<ushort> list = new List<ushort>(_mismatch);
-            _reconcilePending = true;
-            Singleton<SimulationManager>.instance.AddAction(delegate ()
-            {
-                try
-                {
-                    NetManager nm = NetManager.instance;
-                    NetSegment[] segs = nm.m_segments.m_buffer;
-                    for (int i = 0; i < list.Count; i++)
-                    {
-                        if (FenceStore.Reconcile(list[i])) FenceApplier.RefreshRender(nm, segs, list[i]);
-                    }
-                }
-                catch (System.Exception ex)
-                {
-                    Debug.LogError("[QuayTools] Fence orientation sync failed: " + ex);
-                }
-                finally
-                {
-                    _reconcilePending = false;
-                }
-            });
         }
 
         private static bool IsCtrlHeld()

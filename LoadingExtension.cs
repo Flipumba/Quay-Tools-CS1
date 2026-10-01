@@ -36,6 +36,7 @@ namespace QuayTools
             _hotkeyHost.AddComponent<QuayToolsController>();
             _hotkeyHost.AddComponent<DecalRenderer>();
             _hotkeyHost.AddComponent<PropLineRenderer>();
+            _hotkeyHost.AddComponent<NetLineRenderer>();
             _hotkeyHost.AddComponent<EditedMarkers>();
             Debug.Log("[QuayTools] Load finished");
         }
@@ -49,7 +50,7 @@ namespace QuayTools
             PropLineStore.Clear();
             LockStore.Clear();
             PedStore.Clear();
-            FenceStore.Clear();
+            NetLineStore.Clear();
             Bootstrap.Shutdown();
             Debug.Log("[QuayTools] Shutdown finished");
 

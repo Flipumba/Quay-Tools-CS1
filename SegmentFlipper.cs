@@ -127,9 +127,8 @@ namespace QuayTools
 
             segs[segmentId].m_flags ^= NetSegment.Flags.Invert;
 
-            // Inverting mirrors the quay model, so land and water swap sides. Fences we placed follow their
-            // land/water meaning, hence they swap slots (the slots themselves are fixed to geometric sides).
-            FenceStore.Reconcile(segmentId);
+            // Inverting mirrors the quay model, so land and water swap sides; our lines are placed relative to the water
+            // side and follow it by themselves.
             LockStore.Refresh(segmentId); // a deliberate flip: a locked segment keeps the new orientation
 
             ushort startNode = segs[segmentId].m_startNode;

@@ -146,6 +146,68 @@ namespace QuayTools
         public static bool P8(object __instance, ushort __8) { return !Skip(__instance, __8); }
         public static bool P9(object __instance, ushort __9) { return !Skip(__instance, __9); }
 
+        // the same for methods that return bool (ProcessItemCosts returns false when a segment is not usable)
+        public static bool B0(object __instance, ushort __0, ref bool __result)
+        {
+            if (!Skip(__instance, __0)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B1(object __instance, ushort __1, ref bool __result)
+        {
+            if (!Skip(__instance, __1)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B2(object __instance, ushort __2, ref bool __result)
+        {
+            if (!Skip(__instance, __2)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B3(object __instance, ushort __3, ref bool __result)
+        {
+            if (!Skip(__instance, __3)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B4(object __instance, ushort __4, ref bool __result)
+        {
+            if (!Skip(__instance, __4)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B5(object __instance, ushort __5, ref bool __result)
+        {
+            if (!Skip(__instance, __5)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B6(object __instance, ushort __6, ref bool __result)
+        {
+            if (!Skip(__instance, __6)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B7(object __instance, ushort __7, ref bool __result)
+        {
+            if (!Skip(__instance, __7)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B8(object __instance, ushort __8, ref bool __result)
+        {
+            if (!Skip(__instance, __8)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+        public static bool B9(object __instance, ushort __9, ref bool __result)
+        {
+            if (!Skip(__instance, __9)) return true;
+            __result = false; // the game's own "nothing to expand" result
+            return false;
+        }
+
         public static void Apply(Harmony harmony)
         {
             try
@@ -182,11 +244,12 @@ namespace QuayTools
                     }
                     all.Append(')');
 
-                    if (index < 0 || index > 9 || m.ReturnType != typeof(void)) continue;
+                    bool isBool = m.ReturnType == typeof(bool);
+                    if (index < 0 || index > 9 || (m.ReturnType != typeof(void) && !isBool)) continue;
 
                     try
                     {
-                        MethodInfo prefix = typeof(PedestrianPathPatch).GetMethod("P" + index, BindingFlags.Public | BindingFlags.Static);
+                        MethodInfo prefix = typeof(PedestrianPathPatch).GetMethod((isBool ? "B" : "P") + index, BindingFlags.Public | BindingFlags.Static);
                         harmony.Patch(m, new HarmonyMethod(prefix));
                         patched++;
                         all.Append("  <- patched (segment id at position ").Append(index).Append(')');

@@ -168,7 +168,6 @@ namespace QuayTools
                 }
 
                 segs[id].m_flags ^= NetSegment.Flags.Invert;
-                FenceStore.Reconcile(id); // fences keep their land/water side
 
                 ushort a = segs[id].m_startNode, b = segs[id].m_endNode;
                 nm.UpdateSegment(id);

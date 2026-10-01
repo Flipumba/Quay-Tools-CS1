@@ -206,7 +206,7 @@ namespace QuayTools
         }
 
         /// <summary>True when exactly two segments meet at the node (only then the gap between their ends can be split between them).</summary>
-        private static bool JoinsTwo(ushort nodeId)
+        internal static bool JoinsTwo(ushort nodeId)
         {
             if (nodeId == 0) return false;
             NetNode node = NetManager.instance.m_nodes.m_buffer[nodeId];
@@ -223,7 +223,7 @@ namespace QuayTools
         /// continued over half of the gap between the segment end and its neighbour (the neighbour covers the other half),
         /// following the bend and the height curve of the node.
         /// </summary>
-        private static void ExtendToNodeCentres(ushort id, DecalRenderer.Corners c, DecalSettings tmp, float lift, bool waterRight, DecalRenderer.Path path)
+        internal static void ExtendToNodeCentres(ushort id, DecalRenderer.Corners c, DecalSettings tmp, float lift, bool waterRight, DecalRenderer.Path path)
         {
             NetSegment seg = NetManager.instance.m_segments.m_buffer[id];
             Vector3[] Qs = null, Qe = null;

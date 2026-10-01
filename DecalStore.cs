@@ -25,6 +25,7 @@ namespace QuayTools
         public int Scale = DefaultScale; // world width of one repeat of the decal texture, units of 0.1 m
         public int Step;                 // distance between placed decal tiles along the path, units of 0.1 m; 0 = one tile length
         public int Box = DefaultBox;     // height (thickness) of the projection box of placed decals, units of 0.1 m
+        public bool Strip;               // alternative method: one textured strip with a composed texture instead of placed game decals
 
         public Color TintColor
         {
@@ -48,16 +49,40 @@ namespace QuayTools
             Scale = DefaultScale;
             Step = 0;
             Box = DefaultBox;
+            Strip = false;
         }
 
         public bool SameAs(DecalSettings o)
         {
             return o != null && Width == o.Width && Lateral == o.Lateral && Lift == o.Lift && R == o.R && G == o.G && B == o.B && A == o.A &&
-                   Scale == o.Scale && Step == o.Step && Box == o.Box && Prop == o.Prop;
+                   Scale == o.Scale && Step == o.Step && Box == o.Box && Prop == o.Prop && Strip == o.Strip;
         }
     }
 
-    /// <summary>Thread-safe store of decal paths keyed by segment id, saved in the savegame.</summary>
+    /// <summary>All texture paths of one segment.</summary>
+    internal class DecalSet
+    {
+        public readonly List<DecalSettings> Paths = new List<DecalSettings>();
+
+        public DecalSet Clone()
+        {
+            DecalSet c = new DecalSet();
+            for (int i = 0; i < Paths.Count; i++) c.Paths.Add(Paths[i].Clone());
+            return c;
+        }
+
+        public bool SameAs(DecalSet o)
+        {
+            if (o == null || o.Paths.Count != Paths.Count) return false;
+            for (int i = 0; i < Paths.Count; i++)
+            {
+                if (!Paths[i].SameAs(o.Paths[i])) return false;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>Thread-safe store of texture paths (any number per segment) keyed by segment id, saved in the savegame.</summary>
     internal static class DecalStore
     {
         public const int MinScale = DecalSettings.MinScale;
@@ -67,6 +92,7 @@ namespace QuayTools
         public const int MaxBox = DecalSettings.MaxBox;
         public const int MinWidth = 1;    // 0.1 m
         public const int MaxWidth = 500;  // 50 m
+        public const int MaxPathsPerSegment = 15;
 
         // palette of the old versions (format 2 saves stored an index)
         private static readonly Color32[] LegacyColors =
@@ -79,17 +105,17 @@ namespace QuayTools
             new Color32(20, 20, 20, 245)     // black
         };
 
-        private const int FormatVersion = 4;
-        private static readonly Dictionary<ushort, DecalSettings> Map = new Dictionary<ushort, DecalSettings>();
+        private const int FormatVersion = 5;
+        private static readonly Dictionary<ushort, DecalSet> Map = new Dictionary<ushort, DecalSet>();
 
         /// <summary>Raised (flag) whenever the content changes; the renderer rebuilds its meshes.</summary>
         public static volatile int Version;
 
-        public static bool TryGet(ushort segment, out DecalSettings s)
+        public static bool TryGet(ushort segment, out DecalSet set)
         {
             lock (Map)
             {
-                return Map.TryGetValue(segment, out s);
+                return Map.TryGetValue(segment, out set);
             }
         }
 
@@ -109,12 +135,13 @@ namespace QuayTools
             }
         }
 
-        public static void Set(ushort segment, DecalSettings s)
+        /// <summary>Replaces (or, with null or an empty set, removes) the paths of a segment.</summary>
+        public static void Set(ushort segment, DecalSet set)
         {
             lock (Map)
             {
-                if (s == null) Map.Remove(segment);
-                else Map[segment] = s;
+                if (set == null || set.Paths.Count == 0) Map.Remove(segment);
+                else Map[segment] = set;
             }
             Version++;
         }
@@ -134,12 +161,17 @@ namespace QuayTools
         }
 
         /// <summary>Copy of the current entries (safe to iterate on any thread).</summary>
-        public static List<KeyValuePair<ushort, DecalSettings>> Snapshot()
+        public static List<KeyValuePair<ushort, DecalSet>> Snapshot()
         {
+            List<KeyValuePair<ushort, DecalSet>> list = new List<KeyValuePair<ushort, DecalSet>>();
             lock (Map)
             {
-                return new List<KeyValuePair<ushort, DecalSettings>>(Map);
+                foreach (KeyValuePair<ushort, DecalSet> kv in Map)
+                {
+                    list.Add(new KeyValuePair<ushort, DecalSet>(kv.Key, kv.Value.Clone()));
+                }
             }
+            return list;
         }
 
         // ---------- savegame ----------
@@ -153,7 +185,7 @@ namespace QuayTools
                 {
                     NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
                     List<ushort> keys = new List<ushort>();
-                    foreach (KeyValuePair<ushort, DecalSettings> kv in Map)
+                    foreach (KeyValuePair<ushort, DecalSet> kv in Map)
                     {
                         if ((segs[kv.Key].m_flags & NetSegment.Flags.Created) != NetSegment.Flags.None) keys.Add(kv.Key);
                     }
@@ -162,24 +194,67 @@ namespace QuayTools
                     w.Write(keys.Count);
                     for (int i = 0; i < keys.Count; i++)
                     {
-                        DecalSettings s = Map[keys[i]];
+                        DecalSet set = Map[keys[i]];
                         w.Write((int)keys[i]);
-                        w.Write(s.Width);
-                        w.Write(s.Lateral);
-                        w.Write(s.Lift);
-                        w.Write(s.R);
-                        w.Write(s.G);
-                        w.Write(s.B);
-                        w.Write(s.A);
-                        w.Write(s.Prop ?? string.Empty);
-                        w.Write(s.Scale);
-                        w.Write(s.Step);
-                        w.Write(s.Box);
+                        w.Write(set.Paths.Count);
+                        for (int k = 0; k < set.Paths.Count; k++)
+                        {
+                            DecalSettings s = set.Paths[k];
+                            w.Write(s.Width);
+                            w.Write(s.Lateral);
+                            w.Write(s.Lift);
+                            w.Write(s.R);
+                            w.Write(s.G);
+                            w.Write(s.B);
+                            w.Write(s.A);
+                            w.Write(s.Prop ?? string.Empty);
+                            w.Write(s.Scale);
+                            w.Write(s.Step);
+                            w.Write(s.Box);
+                            w.Write(s.Strip);
+                        }
                     }
                 }
                 w.Flush();
                 return ms.ToArray();
             }
+        }
+
+        private static DecalSettings ReadOne(BinaryReader r, int version)
+        {
+            DecalSettings s = new DecalSettings();
+            s.Width = Mathf.Clamp(r.ReadInt32(), MinWidth, MaxWidth);
+            s.Lateral = Mathf.Clamp(r.ReadInt32(), -FenceStore.MaxUnits, FenceStore.MaxUnits);
+            s.Lift = Mathf.Clamp(r.ReadInt32(), -FenceStore.MaxUnits, FenceStore.MaxUnits);
+            if (version >= 3)
+            {
+                s.R = r.ReadByte();
+                s.G = r.ReadByte();
+                s.B = r.ReadByte();
+                s.A = r.ReadByte();
+            }
+            else
+            {
+                Color32 old = LegacyColors[Mathf.Clamp(r.ReadInt32(), 0, LegacyColors.Length - 1)];
+                s.R = old.r;
+                s.G = old.g;
+                s.B = old.b;
+                s.A = old.a;
+            }
+            if (version >= 2)
+            {
+                string prop = r.ReadString();
+                s.Prop = string.IsNullOrEmpty(prop) ? null : prop;
+                s.Scale = Mathf.Clamp(r.ReadInt32(), MinScale, MaxScale);
+            }
+            if (version >= 4)
+            {
+                s.Step = Mathf.Clamp(r.ReadInt32(), 0, MaxStep);
+                s.Box = Mathf.Clamp(r.ReadInt32(), MinBox, MaxBox);
+            }
+            if (version >= 5) s.Strip = r.ReadBoolean();
+            else s.Strip = Settings.LegacyDecalStrip; // older saves: the method was a global option
+            return s;
         }
 
         public static void Load(byte[] data)
@@ -201,37 +276,14 @@ namespace QuayTools
                         for (int i = 0; i < count; i++)
                         {
                             ushort id = (ushort)r.ReadInt32();
-                            DecalSettings s = new DecalSettings();
-                            s.Width = Mathf.Clamp(r.ReadInt32(), MinWidth, MaxWidth);
-                            s.Lateral = Mathf.Clamp(r.ReadInt32(), -FenceStore.MaxUnits, FenceStore.MaxUnits);
-                            s.Lift = Mathf.Clamp(r.ReadInt32(), -FenceStore.MaxUnits, FenceStore.MaxUnits);
-                            if (version >= 3)
+                            DecalSet set = new DecalSet();
+                            int n = version >= 5 ? r.ReadInt32() : 1; // before format 5 a segment had one path
+                            for (int k = 0; k < n; k++)
                             {
-                                s.R = r.ReadByte();
-                                s.G = r.ReadByte();
-                                s.B = r.ReadByte();
-                                s.A = r.ReadByte();
+                                DecalSettings s = ReadOne(r, version);
+                                if (set.Paths.Count < MaxPathsPerSegment) set.Paths.Add(s);
                             }
-                            else
-                            {
-                                Color32 old = LegacyColors[Mathf.Clamp(r.ReadInt32(), 0, LegacyColors.Length - 1)];
-                                s.R = old.r;
-                                s.G = old.g;
-                                s.B = old.b;
-                                s.A = old.a;
-                            }
-                            if (version >= 2)
-                            {
-                                string prop = r.ReadString();
-                                s.Prop = string.IsNullOrEmpty(prop) ? null : prop;
-                                s.Scale = Mathf.Clamp(r.ReadInt32(), MinScale, MaxScale);
-                            }
-                            if (version >= 4)
-                            {
-                                s.Step = Mathf.Clamp(r.ReadInt32(), 0, MaxStep);
-                                s.Box = Mathf.Clamp(r.ReadInt32(), MinBox, MaxBox);
-                            }
-                            Map[id] = s;
+                            if (set.Paths.Count > 0) Map[id] = set;
                         }
                     }
                     Version++;
@@ -239,7 +291,7 @@ namespace QuayTools
             }
             catch (Exception ex)
             {
-                Debug.LogWarning("[QuayTools] Could not read saved decal paths: " + ex.Message);
+                Debug.LogWarning("[QuayTools] Could not read saved texture paths: " + ex.Message);
                 Clear();
             }
         }

@@ -47,6 +47,8 @@ namespace QuayTools
 
         private class Item
         {
+            public ushort Id;            // segment
+            public int Index;            // number of the path on the segment
             public Mesh Mesh;
             public DecalSettings Settings;
             public PropInfo Prop;        // null: plain strip
@@ -62,8 +64,8 @@ namespace QuayTools
             public bool WaterRight;      // water side of the segment when built (the sideways shift is signed toward water)
         }
 
-        private readonly Dictionary<ushort, Item> _items = new Dictionary<ushort, Item>();
-        private readonly List<ushort> _ids = new List<ushort>();
+        private readonly Dictionary<int, Item> _items = new Dictionary<int, Item>();   // key: segment * 16 + path number
+        private readonly List<int> _ids = new List<int>();
         private readonly List<ushort> _dead = new List<ushort>();
         private readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
         private Material _plain;
@@ -80,7 +82,7 @@ namespace QuayTools
 
         private void OnDestroy()
         {
-            foreach (KeyValuePair<ushort, Item> kv in _items)
+            foreach (KeyValuePair<int, Item> kv in _items)
             {
                 if (kv.Value.Mesh != null) Destroy(kv.Value.Mesh);
             }
@@ -120,7 +122,7 @@ namespace QuayTools
                     item.Dirty = true;
                 }
                 if (!item.Dirty || item.Failed) continue;
-                Build(_ids[i], item);
+                Build(item.Id, item);
                 builds++;
             }
 
@@ -130,28 +132,26 @@ namespace QuayTools
             for (int k = 0; k < checks; k++)
             {
                 if (_cursor >= _ids.Count) _cursor = 0;
-                ushort id = _ids[_cursor++];
+                Item item = _items[_ids[_cursor++]];
+                ushort id = item.Id;
 
                 if ((segs[id].m_flags & NetSegment.Flags.Created) == NetSegment.Flags.None)
                 {
-                    _dead.Add(id);
+                    if (!_dead.Contains(id)) _dead.Add(id);
                     continue;
                 }
 
-                Item item = _items[id];
                 if (item.Dirty || item.Failed) continue;
 
                 Corners c;
                 if (ReadCorners(id, out c) && !c.Same(item.Last)) item.Dirty = true;
 
                 // a neighbour got or lost its path: the bridge across the node changes
-                if (BridgeMode(id, segs[id].m_startNode) != item.BridgeStart || BridgeMode(id, segs[id].m_endNode) != item.BridgeEnd) item.Dirty = true;
+                if (BridgeMode(id, segs[id].m_startNode, item.Index) != item.BridgeStart || BridgeMode(id, segs[id].m_endNode, item.Index) != item.BridgeEnd) item.Dirty = true;
 
                 // the segment was inverted: the water is on the other side now, the sideways shift follows it
                 if (QuayGeometry.GetFrame(id).WaterIsRight != item.WaterRight) item.Dirty = true;
 
-                // the rendering mode was changed in the options
-                if (item.Prop != null && item.Placed != Settings.DecalPlaced) item.Dirty = true;
             }
             for (int i = 0; i < _dead.Count; i++) DecalStore.Remove(_dead[i]);
 
@@ -161,31 +161,38 @@ namespace QuayTools
         private void Sync()
         {
             _version = DecalStore.Version;
-            List<KeyValuePair<ushort, DecalSettings>> entries = DecalStore.Snapshot();
+            List<KeyValuePair<ushort, DecalSet>> entries = DecalStore.Snapshot();
 
-            HashSet<ushort> present = new HashSet<ushort>();
+            HashSet<int> present = new HashSet<int>();
             for (int i = 0; i < entries.Count; i++)
             {
                 ushort id = entries[i].Key;
-                present.Add(id);
-
-                Item item;
-                if (!_items.TryGetValue(id, out item))
+                List<DecalSettings> paths = entries[i].Value.Paths;
+                for (int k = 0; k < paths.Count; k++)
                 {
-                    item = new Item();
-                    _items[id] = item;
-                }
+                    int key = id * 16 + k;
+                    present.Add(key);
 
-                if (item.Settings == null || !item.Settings.SameAs(entries[i].Value))
-                {
-                    item.Settings = entries[i].Value.Clone();
-                    item.Dirty = true;
-                    item.Failed = false;
+                    Item item;
+                    if (!_items.TryGetValue(key, out item))
+                    {
+                        item = new Item();
+                        item.Id = id;
+                        item.Index = k;
+                        _items[key] = item;
+                    }
+
+                    if (item.Settings == null || !item.Settings.SameAs(paths[k]))
+                    {
+                        item.Settings = paths[k].Clone();
+                        item.Dirty = true;
+                        item.Failed = false;
+                    }
                 }
             }
 
-            List<ushort> remove = new List<ushort>();
-            foreach (KeyValuePair<ushort, Item> kv in _items)
+            List<int> remove = new List<int>();
+            foreach (KeyValuePair<int, Item> kv in _items)
             {
                 if (!present.Contains(kv.Key)) remove.Add(kv.Key);
             }
@@ -301,7 +308,7 @@ namespace QuayTools
         /// neighbour's path if it has one and a smaller id, otherwise this one. Returns 0 (no bridge), 1 (the neighbour
         /// bridges) or 2 (this path bridges).
         /// </summary>
-        private static int BridgeMode(ushort id, ushort nodeId)
+        private static int BridgeMode(ushort id, ushort nodeId, int index)
         {
             if (nodeId == 0) return 0;
             NetNode node = NetManager.instance.m_nodes.m_buffer[nodeId];
@@ -315,7 +322,9 @@ namespace QuayTools
                 if (seg != id) other = seg;
             }
             if (count != 2 || other == 0) return 0;
-            return DecalStore.Has(other) && other < id ? 1 : 2;
+            DecalSet otherSet;
+            bool neighbourHasIt = DecalStore.TryGet(other, out otherSet) && otherSet.Paths.Count > index; // the neighbour's path with the same number
+            return neighbourHasIt && other < id ? 1 : 2;
         }
 
         /// <summary>
@@ -538,8 +547,8 @@ namespace QuayTools
                 Path path = SamplePath(P);
 
                 NetSegment seg = NetManager.instance.m_segments.m_buffer[id];
-                item.BridgeStart = BridgeMode(id, seg.m_startNode);
-                item.BridgeEnd = BridgeMode(id, seg.m_endNode);
+                item.BridgeStart = BridgeMode(id, seg.m_startNode, item.Index);
+                item.BridgeEnd = BridgeMode(id, seg.m_endNode, item.Index);
                 if (ok && _gapLogs < 24)
                 {
                     NetNode[] nn = NetManager.instance.m_nodes.m_buffer;
@@ -573,7 +582,7 @@ namespace QuayTools
 
                 float width = Mathf.Clamp(item.Settings.Width, DecalStore.MinWidth, DecalStore.MaxWidth) * FenceStore.Unit;
 
-                item.Placed = prop != null && Settings.DecalPlaced;
+                item.Placed = prop != null && !item.Settings.Strip;
                 if (item.Placed)
                 {
                     item.Tiles = BuildTiles(path, width, item.Settings.Scale * FenceStore.Unit, item.Settings.Step * FenceStore.Unit, item.Settings.Box * FenceStore.Unit, prop);

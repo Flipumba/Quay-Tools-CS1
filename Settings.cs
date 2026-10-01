@@ -82,10 +82,10 @@ namespace QuayTools
             get { return DecalShadows.value; }
         }
 
-        /// <summary>True: decals are placed as real game decal props along the path; false: one textured strip with a composed texture.</summary>
-        public static bool DecalPlaced
+        /// <summary>Only for old saves: the rendering method used to be one global option (true = textured strip). Now every path has its own switch.</summary>
+        public static bool LegacyDecalStrip
         {
-            get { return DecalModeValue.value != 1; }
+            get { return DecalModeValue.value == 1; }
         }
 
         /// <summary>Decal paths across a sharp bend at a node follow the centre line between the two segment ends.</summary>
@@ -143,22 +143,12 @@ namespace QuayTools
                 UndoKeys.value = isChecked;
             });
 
-            string[] decalModes =
-            {
-                "Game decals placed step by step along the path (no mask cropping)",
-                "One textured strip with a composed texture (mask cropping, unlit)"
-            };
-            group.AddDropdown("Decal path rendering", decalModes, DecalModeValue.value == 1 ? 1 : 0, delegate (int sel)
-            {
-                DecalModeValue.value = sel;
-            });
-
-            group.AddCheckbox("Decal strips receive shadows (lit shader; turn off for the unlit look if the colours look wrong)", DecalShadows.value, delegate (bool isChecked)
+            group.AddCheckbox("Texture-path strips receive shadows (lit shader; turn off for the unlit look if the colours look wrong)", DecalShadows.value, delegate (bool isChecked)
             {
                 DecalShadows.value = isChecked;
             });
 
-            group.AddCheckbox("Decal paths: at sharp bends of nodes (Node Controller Renewal) bridge the gap along the centre line", BridgeCentre.value, delegate (bool isChecked)
+            group.AddCheckbox("Texture and prop paths: at sharp bends of nodes (Node Controller Renewal) bridge the gap along the centre line", BridgeCentre.value, delegate (bool isChecked)
             {
                 BridgeCentre.value = isChecked;
             });

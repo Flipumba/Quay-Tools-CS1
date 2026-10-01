@@ -7,9 +7,7 @@ namespace QuayTools
 {
     /// <summary>
     /// All edits of Quay Tools. Every edit runs on the simulation thread, records an undo step and refreshes the
-    /// rendering. Fence models are written into the segment fence slots (like the vanilla fence tool does for roads,
-    /// without its RoadBaseAI check); the game itself saves, renders and deletes those fields.
-    /// Slots: the game's "left" slot is drawn on the geometric right side of the segment.
+    /// rendering. Network-model lines, prop lines and texture paths live in our own stores (saved in the savegame).
     /// </summary>
     internal static class FenceApplier
     {
@@ -73,112 +71,65 @@ namespace QuayTools
             });
         }
 
-        // ---------- fences ----------
+        // ---------- network-model lines ----------
 
-        /// <summary>Puts a model (or null = none) on the land or the water side of every listed segment.</summary>
-        public static void SetModel(List<ushort> segments, bool landSide, NetInfo model, Action<string> report)
+        /// <summary>Appends a network-model line (a copy of the template) to every listed segment.</summary>
+        public static void AddNetLine(List<ushort> segments, NetLine template, Action<string> report)
         {
+            NetLine t = template.Clone();
             Run(segments, null, delegate (ushort id)
             {
-                NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
-
-                // make sure the slots match the current orientation before we address them by land/water
-                FenceStore.Reconcile(id);
-
-                QuayFrame frame = QuayGeometry.GetFrame(id);
-                bool slotLeft = QuayGeometry.SlotIsLeft(landSide, frame.WaterIsRight);
-
-                if (slotLeft) segs[id].LeftFenceInfo = model;
-                else segs[id].RightFenceInfo = model;
-
-                if (model != null)
-                {
-                    FenceStore.GetOrCreate(id);
-                }
-                else
-                {
-                    FenceSettings s;
-                    if (segs[id].LeftFenceInfo == null && segs[id].RightFenceInfo == null &&
-                        (!FenceStore.TryGet(id, out s) || IsDefault(s)))
-                    {
-                        FenceStore.Remove(id);
-                        FenceHeight.Release(id);
-                    }
-                }
-            }, "applied", report);
+                NetLineSet set;
+                NetLineSet copy = NetLineStore.TryGet(id, out set) ? set.Clone() : new NetLineSet();
+                if (copy.Lines.Count >= NetLineStore.MaxLinesPerSegment) return;
+                copy.Lines.Add(t.Clone());
+                NetLineStore.Set(id, copy);
+            }, "line_added", report, true);
         }
 
-        private static bool IsDefault(FenceSettings s)
+        /// <summary>Changes one property of the line with the given index on every listed segment that has it.</summary>
+        public static void EditNetLine(List<ushort> segments, int index, string property, Action<NetLine> apply)
         {
-            return s.IsDefault();
-        }
-
-        public static void SetOffset(List<ushort> segments, bool landSide, bool horizontal, int value)
-        {
-            string key = "off|" + landSide + "|" + horizontal;
-            Run(segments, key, delegate (ushort id)
+            Run(segments, "net|" + index + "|" + property, delegate (ushort id)
             {
-                FenceStore.Reconcile(id);
-                FenceSettings s = FenceStore.GetOrCreate(id);
-                if (landSide)
-                {
-                    if (horizontal) s.LandH = value; else s.LandV = value;
-                }
-                else
-                {
-                    if (horizontal) s.WaterH = value; else s.WaterV = value;
-                }
+                NetLineSet set;
+                if (!NetLineStore.TryGet(id, out set) || index < 0 || index >= set.Lines.Count) return;
+                NetLineSet copy = set.Clone();
+                apply(copy.Lines[index]);
+                NetLineStore.Set(id, copy);
             }, null, null);
         }
 
-        /// <summary>Changes any other fence setting (end shifts, width scale, detaching). Dragging is merged into one undo step.</summary>
-        public static void EditFence(List<ushort> segments, string property, Action<FenceSettings> apply)
-        {
-            Run(segments, "fence|" + property, delegate (ushort id)
-            {
-                FenceStore.Reconcile(id);
-                FenceSettings s = FenceStore.GetOrCreate(id);
-                apply(s);
-            }, null, null);
-        }
-
-        public static void SetCap(List<ushort> segments, bool atStart, bool value)
+        public static void RemoveNetLine(List<ushort> segments, int index, Action<string> report)
         {
             Run(segments, null, delegate (ushort id)
             {
-                FenceSettings s = FenceStore.GetOrCreate(id);
-                if (atStart) s.CapStart = value; else s.CapEnd = value;
-            }, null, null);
+                NetLineSet set;
+                if (!NetLineStore.TryGet(id, out set) || index < 0 || index >= set.Lines.Count) return;
+                NetLineSet copy = set.Clone();
+                copy.Lines.RemoveAt(index);
+                NetLineStore.Set(id, copy);
+            }, "line_removed", report, true);
         }
 
-        /// <summary>Removes both models (and our settings) from the listed segments.</summary>
-        public static void ClearModels(List<ushort> segments, Action<string> report)
+        public static void ClearNetLines(List<ushort> segments, Action<string> report)
         {
             Run(segments, null, delegate (ushort id)
             {
-                NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
-                segs[id].LeftFenceInfo = null;
-                segs[id].RightFenceInfo = null;
-                FenceStore.Remove(id);
-                FenceHeight.Release(id);
-            }, "removed", report, true);
+                NetLineStore.Remove(id);
+            }, "line_cleared", report, true);
         }
 
-        /// <summary>Back to default settings: no offsets, no closing fences (the models stay).</summary>
-        public static void ResetFences(List<ushort> segments, Action<string> report)
+        /// <summary>Back to default values of all lines (the models stay).</summary>
+        public static void ResetNetLines(List<ushort> segments, Action<string> report)
         {
             Run(segments, null, delegate (ushort id)
             {
-                FenceSettings s;
-                if (!FenceStore.TryGet(id, out s)) return;
-                s.ResetOffsets();
-
-                NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
-                if (segs[id].LeftFenceInfo == null && segs[id].RightFenceInfo == null)
-                {
-                    FenceStore.Remove(id);
-                    FenceHeight.Release(id);
-                }
+                NetLineSet set;
+                if (!NetLineStore.TryGet(id, out set)) return;
+                NetLineSet copy = set.Clone();
+                for (int i = 0; i < copy.Lines.Count; i++) copy.Lines[i].ResetValues();
+                NetLineStore.Set(id, copy);
             }, "reset_done", report, true);
         }
 
@@ -249,36 +200,52 @@ namespace QuayTools
             }, "prop_cleared", report, true);
         }
 
-        // ---------- decal paths ----------
+        // ---------- texture paths ----------
 
-        /// <summary>Adds a decal path to every listed segment (or updates an existing one) with the given values.</summary>
+        /// <summary>Appends a texture path (a copy of the template) to every listed segment.</summary>
         public static void AddDecal(List<ushort> segments, DecalSettings values, Action<string> report)
         {
             DecalSettings v = values.Clone();
             Run(segments, null, delegate (ushort id)
             {
-                DecalStore.Set(id, v.Clone());
-            }, "decal_added", report);
+                DecalSet set;
+                DecalSet copy = DecalStore.TryGet(id, out set) ? set.Clone() : new DecalSet();
+                if (copy.Paths.Count >= DecalStore.MaxPathsPerSegment) return;
+                copy.Paths.Add(v.Clone());
+                DecalStore.Set(id, copy);
+            }, "decal_added", report, true);
         }
 
-        public static void RemoveDecal(List<ushort> segments, Action<string> report)
+        public static void RemoveDecal(List<ushort> segments, int index, Action<string> report)
+        {
+            Run(segments, null, delegate (ushort id)
+            {
+                DecalSet set;
+                if (!DecalStore.TryGet(id, out set) || index < 0 || index >= set.Paths.Count) return;
+                DecalSet copy = set.Clone();
+                copy.Paths.RemoveAt(index);
+                DecalStore.Set(id, copy);
+            }, "decal_removed", report, true);
+        }
+
+        public static void ClearDecals(List<ushort> segments, Action<string> report)
         {
             Run(segments, null, delegate (ushort id)
             {
                 DecalStore.Remove(id);
-            }, "decal_removed", report);
+            }, "decal_cleared", report, true);
         }
 
-        /// <summary>Changes one property of the existing decal paths (slider, colour). Dragging is merged into one undo step.</summary>
-        public static void EditDecal(List<ushort> segments, string property, Action<DecalSettings> apply)
+        /// <summary>Changes one property of the path with the given index (slider, colour). Dragging is merged into one undo step.</summary>
+        public static void EditDecal(List<ushort> segments, int index, string property, Action<DecalSettings> apply)
         {
-            Run(segments, "decal|" + property, delegate (ushort id)
+            Run(segments, "decal|" + index + "|" + property, delegate (ushort id)
             {
-                DecalSettings s;
-                if (!DecalStore.TryGet(id, out s)) return;
-                s = s.Clone();
-                apply(s);
-                DecalStore.Set(id, s);
+                DecalSet set;
+                if (!DecalStore.TryGet(id, out set) || index < 0 || index >= set.Paths.Count) return;
+                DecalSet copy = set.Clone();
+                apply(copy.Paths[index]);
+                DecalStore.Set(id, copy);
             }, null, null);
         }
 
@@ -286,11 +253,16 @@ namespace QuayTools
         {
             Run(segments, null, delegate (ushort id)
             {
-                DecalSettings s;
-                if (!DecalStore.TryGet(id, out s)) return;
-                s = s.Clone();
-                s.ResetToDefaults();
-                DecalStore.Set(id, s);
+                DecalSet set;
+                if (!DecalStore.TryGet(id, out set)) return;
+                DecalSet copy = set.Clone();
+                for (int i = 0; i < copy.Paths.Count; i++)
+                {
+                    string keep = copy.Paths[i].Prop;
+                    copy.Paths[i].ResetToDefaults();
+                    copy.Paths[i].Prop = keep;
+                }
+                DecalStore.Set(id, copy);
             }, "reset_done", report, true);
         }
     }

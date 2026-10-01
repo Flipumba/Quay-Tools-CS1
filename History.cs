@@ -5,27 +5,22 @@ using UnityEngine;
 
 namespace QuayTools
 {
-    /// <summary>Everything Quay Tools stores for one segment: the fence slots, our fence settings and the decal path.</summary>
+    /// <summary>Everything Quay Tools stores for one segment: network-model lines, texture paths, prop lines, lock, pedestrian block.</summary>
     internal class SegSnap
     {
-        public NetInfo Left, Right;
-        public FenceSettings Fence;
-        public DecalSettings Decal;
+        public NetLineSet Lines;
+        public DecalSet Decals;
         public PropLine Props;
         public int Lock = -1; // see LockStore.Get
         public bool NoPeds;
 
         public static SegSnap Capture(ushort id)
         {
-            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
             SegSnap s = new SegSnap();
-            s.Left = segs[id].LeftFenceInfo;
-            s.Right = segs[id].RightFenceInfo;
-
-            FenceSettings f;
-            if (FenceStore.TryGet(id, out f)) s.Fence = f.Clone();
-            DecalSettings d;
-            if (DecalStore.TryGet(id, out d)) s.Decal = d.Clone();
+            NetLineSet n;
+            if (NetLineStore.TryGet(id, out n)) s.Lines = n.Clone();
+            DecalSet d;
+            if (DecalStore.TryGet(id, out d)) s.Decals = d.Clone();
             PropLine p;
             if (PropLineStore.TryGet(id, out p)) s.Props = p.Clone();
             s.Lock = LockStore.Get(id);
@@ -36,11 +31,10 @@ namespace QuayTools
         public bool SameAs(SegSnap o)
         {
             if (o == null) return false;
-            if (Left != o.Left || Right != o.Right) return false;
-            if ((Fence == null) != (o.Fence == null)) return false;
-            if (Fence != null && !Fence.SameAs(o.Fence)) return false;
-            if ((Decal == null) != (o.Decal == null)) return false;
-            if (Decal != null && !Decal.SameAs(o.Decal)) return false;
+            if ((Lines == null) != (o.Lines == null)) return false;
+            if (Lines != null && !Lines.SameAs(o.Lines)) return false;
+            if ((Decals == null) != (o.Decals == null)) return false;
+            if (Decals != null && !Decals.SameAs(o.Decals)) return false;
             if ((Props == null) != (o.Props == null)) return false;
             if (Props != null && !Props.SameAs(o.Props)) return false;
             if (Lock != o.Lock || NoPeds != o.NoPeds) return false;
@@ -50,24 +44,16 @@ namespace QuayTools
         /// <summary>Simulation thread.</summary>
         public void Restore(ushort id)
         {
-            NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
-            segs[id].LeftFenceInfo = Left;
-            segs[id].RightFenceInfo = Right;
-
-            FenceStore.Set(id, Fence == null ? null : Fence.Clone());
-            if (Fence == null) FenceHeight.Release(id);
-            DecalStore.Set(id, Decal == null ? null : Decal.Clone());
+            NetLineStore.Set(id, Lines == null ? null : Lines.Clone());
+            DecalStore.Set(id, Decals == null ? null : Decals.Clone());
             PropLineStore.Set(id, Props == null ? null : Props.Clone());
             LockStore.SetRaw(id, Lock);
             PedStore.SetBlocked(id, NoPeds);
-
-            // the segment may have been inverted since the snapshot was taken: keep the fences on their land/water side
-            FenceStore.Reconcile(id);
         }
     }
 
     /// <summary>
-    /// Undo / redo of Quay Tools edits (models, offsets, closing fences, decal paths, resets).
+    /// Undo / redo of Quay Tools edits (network-model lines, prop lines, texture paths, resets).
     /// Own history: it does not go through other undo mods.
     /// </summary>
     internal static class History

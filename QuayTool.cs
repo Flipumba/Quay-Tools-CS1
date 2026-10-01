@@ -15,11 +15,11 @@ namespace QuayTools
         public enum Mode
         {
             Invert = 0,
-            RemovePedestrian = 1,
-            AddNetwork = 2,
-            Decal = 3,
+            Lock = 1,
+            RemovePedestrian = 2,
+            AddNetwork = 3,   // network-model lines ("Network-line")
             PropLine = 4,
-            Lock = 5
+            Decal = 5         // texture paths ("Texture-path")
         }
 
         public const int ModeCount = 6;
@@ -29,7 +29,6 @@ namespace QuayTools
         private static readonly Color SelectedColor = new Color(1.00f, 0.75f, 0.10f, 0.60f);
         private static readonly Color EditedColor = new Color(0.25f, 0.85f, 0.95f, 0.22f);
         private static readonly Color LockedColor = new Color(1.00f, 0.30f, 0.30f, 0.55f);
-        private static readonly Color LandColor = new Color(0.30f, 1.00f, 0.45f, 0.95f);
         internal static readonly Color StartColor = new Color(0.20f, 0.95f, 1.00f, 0.95f);
         internal static readonly Color EndColor = new Color(1.00f, 0.35f, 0.90f, 0.95f);
         private static readonly Color WaterColor = new Color(0.20f, 0.60f, 1.00f, 0.95f);
@@ -51,6 +50,9 @@ namespace QuayTools
 
         private ushort _cacheSegment;
         private bool _cacheChain;
+
+        /// <summary>The line (network-line mode) or path (texture-path mode) the panel is editing; it is highlighted on the selected segments.</summary>
+        public int ActiveLine;
 
         public IList<ushort> Selection
         {
@@ -286,36 +288,30 @@ namespace QuayTools
             return new List<ushort>(_selected);
         }
 
-        public void ApplyModel(bool landSide, NetInfo model)
+        // network-model lines
+
+        internal void AddNetLine(NetLine template)
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
-            FenceApplier.SetModel(SelectionCopy(), landSide, model, Report);
+            FenceApplier.AddNetLine(SelectionCopy(), template, Report);
         }
 
-        public void ApplyOffset(bool landSide, bool horizontal, int value)
+        internal void EditNetLine(int index, string property, Action<NetLine> apply)
         {
             if (_selected.Count == 0) return;
-            FenceApplier.SetOffset(SelectionCopy(), landSide, horizontal, value);
+            FenceApplier.EditNetLine(SelectionCopy(), index, property, apply);
         }
 
-        public void ApplyCap(bool atStart, bool value)
-        {
-            if (_selected.Count == 0) return;
-            FenceApplier.SetCap(SelectionCopy(), atStart, value);
-        }
-
-        public void RemoveModels()
+        public void RemoveNetLine(int index)
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
-            FenceApplier.ClearModels(SelectionCopy(), Report);
+            FenceApplier.RemoveNetLine(SelectionCopy(), index, Report);
         }
 
-        // detaching, end shifts and width scale of fences
-
-        internal void EditFence(string property, Action<FenceSettings> apply)
+        public void ClearNetLines()
         {
-            if (_selected.Count == 0) return;
-            FenceApplier.EditFence(SelectionCopy(), property, apply);
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            FenceApplier.ClearNetLines(SelectionCopy(), Report);
         }
 
         // orientation lock
@@ -353,7 +349,7 @@ namespace QuayTools
             FenceApplier.ClearPropLines(SelectionCopy(), Report);
         }
 
-        // decal paths
+        // texture paths
 
         internal void AddDecal(DecalSettings values)
         {
@@ -361,16 +357,22 @@ namespace QuayTools
             FenceApplier.AddDecal(SelectionCopy(), values, Report);
         }
 
-        public void RemoveDecal()
+        public void RemoveDecal(int index)
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
-            FenceApplier.RemoveDecal(SelectionCopy(), Report);
+            FenceApplier.RemoveDecal(SelectionCopy(), index, Report);
         }
 
-        internal void EditDecal(string property, Action<DecalSettings> apply)
+        public void ClearDecals()
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            FenceApplier.ClearDecals(SelectionCopy(), Report);
+        }
+
+        internal void EditDecal(int index, string property, Action<DecalSettings> apply)
         {
             if (_selected.Count == 0) return;
-            FenceApplier.EditDecal(SelectionCopy(), property, apply);
+            FenceApplier.EditDecal(SelectionCopy(), index, property, apply);
         }
 
         // reset, undo, redo
@@ -380,7 +382,7 @@ namespace QuayTools
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
             if (CurrentMode == Mode.Decal) FenceApplier.ResetDecals(SelectionCopy(), Report);
-            else FenceApplier.ResetFences(SelectionCopy(), Report);
+            else if (CurrentMode == Mode.AddNetwork) FenceApplier.ResetNetLines(SelectionCopy(), Report);
         }
 
         public void Undo()
@@ -457,17 +459,21 @@ namespace QuayTools
             }
         }
 
-        private static void DrawSelected(RenderManager.CameraInfo cameraInfo, ushort segmentId, bool fenceMode)
+        private void DrawSelected(RenderManager.CameraInfo cameraInfo, ushort segmentId, bool lineMode)
         {
             QuayGeometry.DrawModel(cameraInfo, segmentId, SelectedColor);
-            if (!fenceMode) return; // decal mode: only the selection highlight
+            if (!lineMode) return; // other modes: only the selection highlight
 
-            // thin lines on the two model edges: green = land side (model 1), blue = water side (model 2)
-            QuayFrame f = QuayGeometry.GetFrame(segmentId);
-            QuayGeometry.DrawStripe(cameraInfo, segmentId, f.LandEdge, 0.7f, LandColor);
-            QuayGeometry.DrawStripe(cameraInfo, segmentId, f.WaterEdge, 0.7f, WaterColor);
+            // thin line along the network-model line that is being edited
+            NetLineSet set;
+            if (NetLineStore.TryGet(segmentId, out set) && ActiveLine >= 0 && ActiveLine < set.Lines.Count)
+            {
+                QuayFrame f = QuayGeometry.GetFrame(segmentId);
+                float y = set.Lines[ActiveLine].Lateral * FenceStore.Unit * (f.WaterIsRight ? 1f : -1f); // right of start->end positive
+                QuayGeometry.DrawStripe(cameraInfo, segmentId, y, 0.7f, WaterColor);
+            }
 
-            // rings on the two ends: cyan = start of the segment, magenta = end (for the "close fence" options)
+            // rings on the two ends: cyan = start of the segment, magenta = end (for the "close" options)
             NetManager nm = NetManager.instance;
             NetSegment seg = nm.m_segments.m_buffer[segmentId];
             RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, StartColor, nm.m_nodes.m_buffer[seg.m_startNode].m_position, 5f, -1f, 1280f, false, true);

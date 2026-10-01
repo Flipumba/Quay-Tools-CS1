@@ -24,8 +24,8 @@ namespace QuayTools
 
         public static QuayToolPanel Instance { get; private set; }
 
-        private static readonly string[] TitleKeys = { "mode_invert", "mode_nopeds", "mode_network", "mode_decal", "mode_props", "mode_lock" };
-        private static readonly string[] IconFiles = { "Invert.png", "NoPedestrian.png", "Network.png", "Decal.png", "Props.png", "Lock.png" };
+        private static readonly string[] TitleKeys = { "mode_invert", "mode_lock", "mode_nopeds", "mode_network", "mode_props", "mode_decal" };
+        private static readonly string[] IconFiles = { "Invert.png", "Lock.png", "NoPedestrian.png", "Network.png", "Props.png", "Decal.png" };
 
         /// <summary>A check box drawn as a button: "[x] text".</summary>
         private class Toggle
@@ -59,7 +59,6 @@ namespace QuayTools
 
         private class PickerUi
         {
-            public bool Land;
             public int Kind;                          // Favorites kind
             public UIComponent Parent;
             public string EmptyText;
@@ -69,11 +68,6 @@ namespace QuayTools
             public UIButton Header;
             public UISprite Icon;
             public UILabel Name;
-            public UISlider H, V;
-            public UITextField HValue, VValue;
-            public UISlider S0, S1, Scale;            // fence end trims and width scale (right column)
-            public UITextField S0V, S1V, ScaleV;
-            public Toggle Flip;
             public UIPanel Popup;
             public UITextField Search;
             public UIScrollbar Bar;
@@ -90,22 +84,20 @@ namespace QuayTools
         private bool _built;
         private bool _loading;
 
-        private UIPanel _add;
-        private float _addHeight;
-        private UILabel _selectionLabel;
-        private PickerUi _landUi;
-        private PickerUi _waterUi;
-        private UIButton _capStartButton, _capEndButton;
-        private UIButton _removeButton;
-        private bool _capStart, _capEnd;
         private PickerUi _openPopup;
 
-        // extra column of the network section (end shifts, width scale, detaching)
-        private UIPanel _adv;
-        private UIButton _advToggle;
-        private bool _advOpen;
-        private float _advHeight;
-        private Toggle _detachStart, _detachEnd;
+        // network-model line section
+        private UIPanel _net, _netRight;
+        private float _netHeight;
+        private UILabel _netSel, _netNav, _netState;
+        private UIButton _netPrev, _netNext, _netAdd, _netRemove, _netClear;
+        private PickerUi _netUi;
+        private UISlider _nStart, _nEnd, _nLateral, _nLift, _nScale;
+        private UITextField _nStartV, _nEndV, _nLateralV, _nLiftV, _nScaleV;
+        private Toggle _nFlip, _nCapStart, _nCapEnd;
+        private int _netIndex;
+        private int _netCount;
+        private string _lastNetModel;
 
         // orientation lock section
         private UIPanel _lock;
@@ -124,13 +116,15 @@ namespace QuayTools
         private UITextField _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV;
         private UITextField _pAngleV, _pScaleV, _pRandV;
         private Toggle _pRotate;
+        private UIPanel _propRot, _propRest;   // rotation controls (hidden for trees) and everything below them
+        private float _propHeightFull, _propHeightTree;
         private int _propIndex;
         private int _propCount;
 
-        // decal path section
-        private UIPanel _decal;
+        // texture path section
+        private UIPanel _decal, _decalRight;
         private float _decalHeight;
-        private UILabel _decalSel, _decalState;
+        private UILabel _decalSel, _decalNav, _decalState;
         private UISlider _dWidth, _dScale, _dLateral, _dLift, _dStep, _dBox;
         private UITextField _dWidthV, _dScaleV, _dLateralV, _dLiftV, _dStepV, _dBoxV;
         private PickerUi _decalUi;
@@ -139,8 +133,13 @@ namespace QuayTools
         private UIPanel _dSwatch;
         private UITextField _dHex;
         private bool _colorSync;
-        private UIButton _dAdd, _dRemove;
-        private readonly DecalSettings _brush = new DecalSettings(); // values used when a path is added; edits apply to existing paths
+        private UIButton _dAdd, _dRemove, _dClear, _decalPrev, _decalNext;
+        private Toggle _dStrip;
+        private int _decalIndex;
+        private int _decalCount;
+        private string _lastDecalProp;
+        private int _lastDecalScale = DecalSettings.DefaultScale;
+        private readonly DecalSettings _brush = new DecalSettings(); // the values of the path shown in the controls
 
         // bottom bar (selection modes)
         private UIPanel _bar;
@@ -492,172 +491,63 @@ namespace QuayTools
             _status.textColor = new Color32(120, 220, 140, 255);
             _status.width = PanelWidth - 24f;
 
-            BuildAddNetworkSection();
+            BuildNetSection();
             BuildDecalSection();
             BuildLockSection();
             BuildPropSection();
             BuildBar();
         }
 
-        private UIButton MakeCapButton(float y, bool atStart)
-        {
-            UIButton b = _add.AddUIComponent<UIButton>();
-            b.width = PanelWidth - 20f;
-            b.height = 30f;
-            b.relativePosition = new Vector3(10f, y);
-            StyleButton(b);
-            b.textScale = 0.8f;
-            b.textHorizontalAlignment = UIHorizontalAlignment.Left;
-            b.textPadding = new RectOffset(10, 0, 0, 0);
-            Color32 c = atStart ? (Color32)QuayTool.StartColor : (Color32)QuayTool.EndColor;
-            b.textColor = c;
-            b.hoveredTextColor = c;
-            b.pressedTextColor = c;
-            b.focusedTextColor = c;
-            b.eventClicked += delegate (UIComponent comp, UIMouseEventParameter e)
-            {
-                if (_loading) return;
-                if (atStart) _capStart = !_capStart; else _capEnd = !_capEnd;
-                UpdateCapText();
-                QuayTool tool = QuayTool.Instance;
-                if (tool != null) tool.ApplyCap(atStart, atStart ? _capStart : _capEnd);
-            };
-            return b;
-        }
+        // ---------- network-model line section ----------
 
-        private void BuildAddNetworkSection()
+        private void BuildNetSection()
         {
-            _add = AddUIComponent<UIPanel>();
-            _add.width = PanelWidth;
-            _add.relativePosition = new Vector3(0f, ContentTop);
-            _add.isVisible = false;
+            _net = AddUIComponent<UIPanel>();
+            _net.width = PanelWidth * 2f;
+            _net.relativePosition = new Vector3(0f, ContentTop);
+            _net.isVisible = false;
 
+            _netRight = _net.AddUIComponent<UIPanel>();
+            _netRight.width = PanelWidth;
+            _netRight.relativePosition = new Vector3(PanelWidth, 0f);
+
+            // ---- left column: lines, chooser, ends
             float y = 0f;
-            _selectionLabel = MakeLabel(_add, string.Empty, 12f, y, 0.85f);
+            _netSel = MakeLabel(_net, string.Empty, 12f, y, 0.85f);
             y += 24f;
 
-            _landUi = BuildBlock(true, ref y);
-            _waterUi = BuildBlock(false, ref y);
-
-            _capStartButton = MakeCapButton(y, true);
-            _capEndButton = MakeCapButton(y + 34f, false);
-            UpdateCapText();
-            y += 72f;
-
-            _advToggle = _add.AddUIComponent<UIButton>();
-            _advToggle.width = PanelWidth - 20f;
-            _advToggle.height = 30f;
-            _advToggle.relativePosition = new Vector3(10f, y);
-            StyleButton(_advToggle);
-            _advToggle.textScale = 0.8f;
-            _advToggle.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
-            {
-                ClosePopup();
-                _advOpen = !_advOpen;
-                Refresh();
-            };
-            UpdateAdvToggle();
+            _netPrev = MakeSmallButton(_net, 10f, y, 34f, "<", delegate { StepNet(-1); });
+            _netNav = MakeLabel(_net, string.Empty, 54f, y + 8f, 0.8f);
+            _netNext = MakeSmallButton(_net, PanelWidth - 44f, y, 34f, ">", delegate { StepNet(1); });
             y += 36f;
 
-            _removeButton = _add.AddUIComponent<UIButton>();
-            _removeButton.width = PanelWidth - 20f;
-            _removeButton.height = 32f;
-            _removeButton.relativePosition = new Vector3(10f, y);
-            StyleButton(_removeButton);
-            _removeButton.text = Loc.T("remove");
-            _removeButton.textScale = 0.85f;
-            _removeButton.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            _netAdd = _net.AddUIComponent<UIButton>();
+            _netAdd.width = PanelWidth - 20f;
+            _netAdd.height = 32f;
+            _netAdd.relativePosition = new Vector3(10f, y);
+            StyleButton(_netAdd);
+            _netAdd.text = "+  " + Loc.T("line_add");
+            _netAdd.textScale = 0.85f;
+            _netAdd.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
             {
                 QuayTool tool = QuayTool.Instance;
                 if (tool == null) return;
                 ClosePopup();
-                tool.RemoveModels();
-                LoadFromSelection();
+                _netIndex = int.MaxValue; // show the new (last) line once it exists
+                NetLine template = new NetLine();
+                template.Model = _lastNetModel;
+                tool.AddNetLine(template);
             };
             y += 38f;
 
-            // status line sits under the section
-            _addHeight = y;
+            MakeLabel(_net, Loc.T("line_choose"), 12f, y, 0.85f);
+            y += 20f;
 
-            // popups are created last so that they are drawn above the controls below their button
-            BuildPopup(_landUi);
-            BuildPopup(_waterUi);
-
-            BuildAdvancedColumn();
-        }
-
-        private void UpdateAdvToggle()
-        {
-            _advToggle.text = Loc.T(_advOpen ? "adv_close" : "adv_open");
-            _advToggle.state = _advOpen ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
-        }
-
-        /// <summary>Right column of the network section: end shifts along the quay, width scale and detaching of the fences.</summary>
-        private void BuildAdvancedColumn()
-        {
-            _adv = AddUIComponent<UIPanel>();
-            _adv.width = PanelWidth;
-            _adv.relativePosition = new Vector3(PanelWidth, ContentTop);
-            _adv.isVisible = false;
-
-            float y = 0f;
-            MakeLabel(_adv, Loc.T("adv_title"), 12f, y, 0.85f);
-            y += 26f;
-
-            BuildAdvancedBlock(_landUi, true, ref y);
-            BuildAdvancedBlock(_waterUi, false, ref y);
-
-            _detachStart = MakeToggle(_adv, 10f, y, PanelWidth - 20f, "detachstart", (Color32)QuayTool.StartColor,
-                delegate (bool v) { OnFenceChange("detachstart", delegate (FenceSettings f) { f.DetachStart = v; }); });
-            y += 34f;
-            _detachEnd = MakeToggle(_adv, 10f, y, PanelWidth - 20f, "detachend", (Color32)QuayTool.EndColor,
-                delegate (bool v) { OnFenceChange("detachend", delegate (FenceSettings f) { f.DetachEnd = v; }); });
-            y += 34f;
-
-            UILabel note = MakeLabel(_adv, Loc.T("detach_note"), 12f, y, 0.68f);
-            note.width = PanelWidth - 24f;
-            note.wordWrap = true;
-            note.autoSize = false;
-            note.height = 70f;
-            y += 74f;
-            _advHeight = y;
-        }
-
-        private void BuildAdvancedBlock(PickerUi ui, bool land, ref float y)
-        {
-            UILabel title = MakeLabel(_adv, Loc.T(land ? "model1" : "model2"), 12f, y, 0.85f);
-            title.textColor = land ? new Color32(140, 255, 160, 255) : new Color32(140, 200, 255, 255);
-            y += 22f;
-
-            y = MakeValueRow(_adv, y, "fstart", -FenceStore.MaxShift, 0f, 0f, out ui.S0, out ui.S0V,
-                delegate (int u) { OnFenceChange(land ? "lstart" : "wstart", delegate (FenceSettings f) { if (land) f.LandStart = u; else f.WaterStart = u; }); });
-            y = MakeValueRow(_adv, y, "fend", -FenceStore.MaxShift, 0f, 0f, out ui.S1, out ui.S1V,
-                delegate (int u) { OnFenceChange(land ? "lend" : "wend", delegate (FenceSettings f) { if (land) f.LandEnd = u; else f.WaterEnd = u; }); });
-            y = MakeIntRow(_adv, y, "fscale", FenceStore.ScaleMin, FenceStore.ScaleMax, FenceStore.ScaleDefault, " %", out ui.Scale, out ui.ScaleV,
-                delegate (int u) { OnFenceChange(land ? "lscale" : "wscale", delegate (FenceSettings f) { if (land) f.LandScale = u; else f.WaterScale = u; }); });
-            ui.Flip = MakeToggle(_adv, 10f, y, PanelWidth - 20f, "flipmodel", null,
-                delegate (bool v) { OnFenceChange(land ? "lflip" : "wflip", delegate (FenceSettings f) { if (land) f.LandFlip = v; else f.WaterFlip = v; }); });
-            y += 36f;
-            y += 4f;
-        }
-
-        /// <summary>A control of the extra column changed: apply it to the selected segments (not while controls are loaded).</summary>
-        private void OnFenceChange(string key, Action<FenceSettings> apply)
-        {
-            if (_loading) return;
-            QuayTool tool = QuayTool.Instance;
-            if (tool != null) tool.EditFence(key, apply);
-        }
-
-        private PickerUi BuildBlock(bool land, ref float y)
-        {
-            PickerUi ui = new PickerUi();
-            ui.Land = land;
-
-            ui.Parent = _add;
-            ui.EmptyText = Loc.T("empty");
-            ui.Kind = Favorites.Fences;
-            ui.GetItems = delegate (string text)
+            _netUi = new PickerUi();
+            _netUi.Parent = _net;
+            _netUi.EmptyText = Loc.T("line_none");
+            _netUi.Kind = Favorites.Fences;
+            _netUi.GetItems = delegate (string text)
             {
                 List<PickItem> items = new List<PickItem>();
                 List<FenceEntry> list = FenceCatalog.Entries;
@@ -674,40 +564,185 @@ namespace QuayTools
                 }
                 return items;
             };
-            bool landCaptured = land;
-            ui.OnPicked = delegate (PickItem item)
+            _netUi.OnPicked = OnNetPicked;
+            BuildHeader(_net, _netUi, y);
+            y += 44f;
+
+            y = MakeValueRow(_net, y, "nstart", -NetLine.MaxShift, 0f, 0f, out _nStart, out _nStartV,
+                delegate (int u) { OnNetValue("start", delegate (NetLine l) { l.StartShift = u; }); });
+            y = MakeValueRow(_net, y, "nend", -NetLine.MaxShift, 0f, 0f, out _nEnd, out _nEndV,
+                delegate (int u) { OnNetValue("end", delegate (NetLine l) { l.EndShift = u; }); });
+            y = MakeIntRow(_net, y, "nscale", NetLine.ScaleMin, NetLine.ScaleMax, NetLine.ScaleDefault, " %", out _nScale, out _nScaleV,
+                delegate (int u) { OnNetValue("scale", delegate (NetLine l) { l.Scale = u; }); });
+            float leftBottom = y;
+
+            // ---- right column: position across and up, direction, closing pieces
+            float y2 = 0f;
+            y2 = MakeValueRow(_netRight, y2, "nlateral", -NetLine.MaxOffset, NetLine.MaxOffset, 0f, out _nLateral, out _nLateralV,
+                delegate (int u) { OnNetValue("lateral", delegate (NetLine l) { l.Lateral = u; }); });
+            y2 = MakeValueRow(_netRight, y2, "nlift", -NetLine.MaxOffset, NetLine.MaxOffset, 0f, out _nLift, out _nLiftV,
+                delegate (int u) { OnNetValue("lift", delegate (NetLine l) { l.Lift = u; }); });
+
+            _nFlip = MakeToggle(_netRight, 10f, y2, PanelWidth - 20f, "nflip", null,
+                delegate (bool v) { OnNetValue("flip", delegate (NetLine l) { l.Flip = v; }); });
+            y2 += 36f;
+            _nCapStart = MakeToggle(_netRight, 10f, y2, PanelWidth - 20f, "ncapstart", (Color32)QuayTool.StartColor,
+                delegate (bool v) { OnNetValue("capstart", delegate (NetLine l) { l.CapStart = v; }); });
+            y2 += 34f;
+            _nCapEnd = MakeToggle(_netRight, 10f, y2, PanelWidth - 20f, "ncapend", (Color32)QuayTool.EndColor,
+                delegate (bool v) { OnNetValue("capend", delegate (NetLine l) { l.CapEnd = v; }); });
+            y2 += 40f;
+
+            _netRemove = _netRight.AddUIComponent<UIButton>();
+            _netRemove.width = PanelWidth - 20f;
+            _netRemove.height = 32f;
+            _netRemove.relativePosition = new Vector3(10f, y2);
+            StyleButton(_netRemove);
+            _netRemove.text = Loc.T("line_remove");
+            _netRemove.textScale = 0.85f;
+            _netRemove.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
             {
                 QuayTool tool = QuayTool.Instance;
-                if (tool != null && !_loading) tool.ApplyModel(landCaptured, item == null ? null : (NetInfo)item.Tag);
+                if (tool != null) tool.RemoveNetLine(_netIndex);
             };
+            y2 += 38f;
 
-            ui.Title = MakeLabel(_add, Loc.T(land ? "model1" : "model2"), 12f, y, 0.85f);
-            ui.Title.textColor = land ? new Color32(140, 255, 160, 255) : new Color32(140, 200, 255, 255);
-            y += 20f;
+            _netClear = _netRight.AddUIComponent<UIButton>();
+            _netClear.width = PanelWidth - 20f;
+            _netClear.height = 32f;
+            _netClear.relativePosition = new Vector3(10f, y2);
+            StyleButton(_netClear);
+            _netClear.text = Loc.T("line_clear");
+            _netClear.textScale = 0.85f;
+            _netClear.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool == null) return;
+                ClosePopup();
+                tool.ClearNetLines();
+            };
+            y2 += 38f;
 
-            BuildHeader(_add, ui, y);
-            PickerUi captured = ui;
-            y += 42f;
+            _netState = MakeLabel(_netRight, string.Empty, 12f, y2, 0.75f);
+            y2 += 22f;
 
-            float sliderWidth = PanelWidth - 114f;
+            _netHeight = Mathf.Max(leftBottom, y2) + 4f;
 
-            MakeLabel(_add, Loc.T("hoff"), 12f, y, 0.72f);
-            MakeLabel(_add, Loc.T("meter").Trim(), PanelWidth - 24f, y + 21f, 0.72f);
-            ui.HValue = MakeField(_add, PanelWidth - 92f, y + 19f, delegate (float m) { OnField(captured, true, m); }, FenceStore.MaxUnits * FenceStore.Unit);
-            y += 20f;
-            ui.H = MakeSlider(_add, 12f, y, sliderWidth, -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f);
-            ui.H.eventValueChanged += delegate (UIComponent c, float v) { OnSlider(captured, true, v); };
-            y += 22f;
+            // the list is created last so that it is drawn above the controls below its button
+            BuildPopup(_netUi);
+        }
 
-            MakeLabel(_add, Loc.T("voff"), 12f, y, 0.72f);
-            MakeLabel(_add, Loc.T("meter").Trim(), PanelWidth - 24f, y + 21f, 0.72f);
-            ui.VValue = MakeField(_add, PanelWidth - 92f, y + 19f, delegate (float m) { OnField(captured, false, m); }, FenceStore.MaxUnits * FenceStore.Unit);
-            y += 20f;
-            ui.V = MakeSlider(_add, 12f, y, sliderWidth, -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f);
-            ui.V.eventValueChanged += delegate (UIComponent c, float v) { OnSlider(captured, false, v); };
-            y += 28f;
+        private void OnNetValue(string key, Action<NetLine> apply)
+        {
+            if (_loading) return;
+            QuayTool tool = QuayTool.Instance;
+            if (tool != null) tool.EditNetLine(_netIndex, key, apply);
+        }
 
-            return ui;
+        private void OnNetPicked(PickItem item)
+        {
+            string name = item == null ? null : ((NetInfo)item.Tag).name;
+            if (name != null) _lastNetModel = name;
+            QuayTool tool = QuayTool.Instance;
+            if (tool != null) tool.EditNetLine(_netIndex, "model", delegate (NetLine l) { l.Model = name; });
+        }
+
+        private void StepNet(int direction)
+        {
+            if (_netCount < 2) return;
+            _netIndex += direction;
+            if (_netIndex >= _netCount) _netIndex = 0;
+            if (_netIndex < 0) _netIndex = _netCount - 1;
+            ClosePopup();
+            LoadNetFromSelection();
+        }
+
+        private void ShowNetHeader(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                SetHeaderItem(_netUi, null);
+                return;
+            }
+
+            NetInfo info = FenceCatalog.Find(name);
+            if (info == null)
+            {
+                PickItem item = new PickItem();
+                item.Title = name + Loc.T("missing");
+                SetHeaderItem(_netUi, item);
+                return;
+            }
+            SetHeader(_netUi, info);
+        }
+
+        /// <summary>Shows the current line of the first selected segment that has any.</summary>
+        private void LoadNetFromSelection()
+        {
+            if (_net == null) return;
+
+            QuayTool tool = QuayTool.Instance;
+            int count = tool == null ? 0 : tool.Selection.Count;
+
+            _loading = true;
+            try
+            {
+                _netSel.text = Loc.T("selected") + count;
+
+                NetLineSet set = null;
+                int have = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    NetLineSet s;
+                    if (NetLineStore.TryGet(tool.Selection[i], out s) && s.Lines.Count > 0)
+                    {
+                        have++;
+                        if (set == null) set = s;
+                    }
+                }
+
+                _netCount = set == null ? 0 : set.Lines.Count;
+                _netIndex = _netCount == 0 ? 0 : Mathf.Clamp(_netIndex, 0, _netCount - 1);
+                if (tool != null) tool.ActiveLine = _netCount == 0 ? -1 : _netIndex;
+                NetLine l = set != null ? set.Lines[_netIndex] : new NetLine();
+
+                _netNav.text = _netCount == 0 ? Loc.T("line_nolines") : Loc.F("line_nav", _netIndex + 1, _netCount);
+
+                _nStart.value = l.StartShift;
+                _nEnd.value = l.EndShift;
+                _nLateral.value = l.Lateral;
+                _nLift.value = l.Lift;
+                _nScale.value = l.Scale;
+                _nStartV.text = FormatOffset(_nStart.value);
+                _nEndV.text = FormatOffset(_nEnd.value);
+                _nLateralV.text = FormatOffset(_nLateral.value);
+                _nLiftV.text = FormatOffset(_nLift.value);
+                _nScaleV.text = l.Scale.ToString();
+                SetToggle(_nFlip, l.Flip);
+                SetToggle(_nCapStart, l.CapStart);
+                SetToggle(_nCapEnd, l.CapEnd);
+                ShowNetHeader(l.Model);
+
+                bool any = count > 0, has = _netCount > 0;
+                _netAdd.isEnabled = any;
+                _netPrev.isEnabled = has && _netCount > 1;
+                _netNext.isEnabled = has && _netCount > 1;
+                _netRemove.isEnabled = has;
+                _netClear.isEnabled = has;
+                _netUi.Header.isEnabled = has;
+                UISlider[] sliders = { _nStart, _nEnd, _nLateral, _nLift, _nScale };
+                for (int i = 0; i < sliders.Length; i++) sliders[i].isEnabled = has;
+                _nFlip.Button.isEnabled = has;
+                _nCapStart.Button.isEnabled = has;
+                _nCapEnd.Button.isEnabled = has;
+                if (_resetBtn != null) _resetBtn.isEnabled = has;
+
+                _netState.text = Loc.F("line_state", have, count);
+            }
+            finally
+            {
+                _loading = false;
+            }
         }
 
         /// <summary>The button that shows the chosen entry (icon + name) and opens the drop-down list.</summary>
@@ -1040,11 +1075,6 @@ namespace QuayTools
 
         // ---------- controls -> tool ----------
 
-        private void OnField(PickerUi ui, bool horizontal, float meters)
-        {
-            OnFieldFor(horizontal ? ui.H : ui.V, horizontal ? ui.HValue : ui.VValue, meters);
-        }
-
         /// <summary>A value typed in metres: clamps it to the slider range and moves the slider (which applies it).</summary>
         private static void OnFieldFor(UISlider slider, UITextField field, float meters)
         {
@@ -1063,24 +1093,6 @@ namespace QuayTools
             slider.value = units; // raises eventValueChanged -> the slider handler applies it
         }
 
-        private void OnSlider(PickerUi ui, bool horizontal, float value)
-        {
-            UITextField label = horizontal ? ui.HValue : ui.VValue;
-            label.text = FormatOffset(value);
-
-            if (_loading) return;
-            QuayTool tool = QuayTool.Instance;
-            if (tool != null) tool.ApplyOffset(ui.Land, horizontal, Mathf.RoundToInt(value));
-        }
-
-        private void UpdateCapText()
-        {
-            _capStartButton.text = (_capStart ? "[x]  " : "[  ]  ") + Loc.T("capstart");
-            _capStartButton.state = _capStart ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
-            _capEndButton.text = (_capEnd ? "[x]  " : "[  ]  ") + Loc.T("capend");
-            _capEndButton.state = _capEnd ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
-        }
-
         // ---------- tool -> controls ----------
 
         private void OnSelectionChanged()
@@ -1089,111 +1101,27 @@ namespace QuayTools
             LoadFromSelection();
         }
 
-        /// <summary>Shows the settings of the first selected segment in the controls.</summary>
+        /// <summary>Shows the settings of the first selected segment in the controls of the current mode.</summary>
         private void LoadFromSelection()
         {
-            if (!_built || _add == null) return;
+            if (!_built || _net == null) return;
 
             QuayTool current = QuayTool.Instance;
-            if (current != null)
+            if (current == null) return;
+
+            switch (current.CurrentMode)
             {
-                if (current.CurrentMode == QuayTool.Mode.Decal) { LoadDecalFromSelection(); return; }
-                if (current.CurrentMode == QuayTool.Mode.PropLine) { LoadPropFromSelection(); return; }
-                if (current.CurrentMode == QuayTool.Mode.Lock || current.CurrentMode == QuayTool.Mode.RemovePedestrian) { LoadLockFromSelection(); return; }
+                case QuayTool.Mode.AddNetwork: LoadNetFromSelection(); break;
+                case QuayTool.Mode.Decal: LoadDecalFromSelection(); break;
+                case QuayTool.Mode.PropLine: LoadPropFromSelection(); break;
+                case QuayTool.Mode.Lock:
+                case QuayTool.Mode.RemovePedestrian: LoadLockFromSelection(); break;
             }
-
-            QuayTool tool = QuayTool.Instance;
-            int count = tool == null ? 0 : tool.Selection.Count;
-
-            _loading = true;
-            try
-            {
-                _selectionLabel.text = Loc.T("selected") + count;
-                SetControlsEnabled(count > 0);
-
-                NetInfo landModel = null, waterModel = null;
-                FenceSettings s = new FenceSettings();
-
-                if (count > 0)
-                {
-                    ushort id = tool.Selection[0];
-                    NetSegment[] segs = NetManager.instance.m_segments.m_buffer;
-                    QuayFrame frame = QuayGeometry.GetFrame(id);
-
-                    bool landSlotLeft = QuayGeometry.SlotIsLeft(true, frame.WaterIsRight);
-                    landModel = landSlotLeft ? segs[id].LeftFenceInfo : segs[id].RightFenceInfo;
-                    waterModel = landSlotLeft ? segs[id].RightFenceInfo : segs[id].LeftFenceInfo;
-
-                    FenceSettings stored;
-                    if (FenceStore.TryGet(id, out stored)) s = stored;
-                }
-
-                SetHeader(_landUi, landModel);
-                SetHeader(_waterUi, waterModel);
-
-                _landUi.H.value = s.LandH;
-                _landUi.V.value = s.LandV;
-                _waterUi.H.value = s.WaterH;
-                _waterUi.V.value = s.WaterV;
-                _landUi.HValue.text = FormatOffset(s.LandH);
-                _landUi.VValue.text = FormatOffset(s.LandV);
-                _waterUi.HValue.text = FormatOffset(s.WaterH);
-                _waterUi.VValue.text = FormatOffset(s.WaterV);
-
-                _capStart = s.CapStart;
-                _capEnd = s.CapEnd;
-                UpdateCapText();
-
-                _landUi.S0.value = s.LandStart;
-                _landUi.S1.value = s.LandEnd;
-                _waterUi.S0.value = s.WaterStart;
-                _waterUi.S1.value = s.WaterEnd;
-                _landUi.Scale.value = s.LandScale;
-                _waterUi.Scale.value = s.WaterScale;
-                _landUi.S0V.text = FormatOffset(s.LandStart);
-                _landUi.S1V.text = FormatOffset(s.LandEnd);
-                _waterUi.S0V.text = FormatOffset(s.WaterStart);
-                _waterUi.S1V.text = FormatOffset(s.WaterEnd);
-                _landUi.ScaleV.text = s.LandScale.ToString();
-                _waterUi.ScaleV.text = s.WaterScale.ToString();
-                SetToggle(_landUi.Flip, s.LandFlip);
-                SetToggle(_waterUi.Flip, s.WaterFlip);
-                SetToggle(_detachStart, s.DetachStart);
-                SetToggle(_detachEnd, s.DetachEnd);
-            }
-            finally
-            {
-                _loading = false;
-            }
-        }
-
-        private void SetControlsEnabled(bool enabled)
-        {
-            PickerUi[] blocks = { _landUi, _waterUi };
-            for (int i = 0; i < blocks.Length; i++)
-            {
-                blocks[i].Header.isEnabled = enabled;
-                blocks[i].H.isEnabled = enabled;
-                blocks[i].V.isEnabled = enabled;
-            }
-            for (int i = 0; i < blocks.Length; i++)
-            {
-                blocks[i].S0.isEnabled = enabled;
-                blocks[i].S1.isEnabled = enabled;
-                blocks[i].Scale.isEnabled = enabled;
-                blocks[i].Flip.Button.isEnabled = enabled;
-            }
-            _detachStart.Button.isEnabled = enabled;
-            _detachEnd.Button.isEnabled = enabled;
-            _capStartButton.isEnabled = enabled;
-            _capEndButton.isEnabled = enabled;
-            _removeButton.isEnabled = enabled;
-            if (_resetBtn != null) _resetBtn.isEnabled = enabled;
         }
 
         // ---------- refresh / layout ----------
 
-        /// <summary>Two columns (network extras, prop lines) or one.</summary>
+        /// <summary>Two columns (line modes) or one.</summary>
         private void SetWide(bool wide)
         {
             float target = wide ? PanelWidth * 2f : PanelWidth;
@@ -1235,14 +1163,12 @@ namespace QuayTools
             bool lockMode = current == QuayTool.Mode.Lock || current == QuayTool.Mode.RemovePedestrian;
             bool select = addMode || decalMode || propMode || lockMode;
 
-            _add.isVisible = addMode;
-            _adv.isVisible = addMode && _advOpen;
+            _net.isVisible = addMode;
             _decal.isVisible = decalMode;
             _prop.isVisible = propMode;
             _lock.isVisible = lockMode;
             _bar.isVisible = select;
-            UpdateAdvToggle();
-            SetWide((addMode && _advOpen) || propMode);
+            SetWide(addMode || decalMode || propMode);
             ClosePopup();
             if (select) LoadFromSelection();
             UpdateBar();
@@ -1253,13 +1179,13 @@ namespace QuayTools
         {
             if (!_built) return;
 
-            bool addMode = _add != null && _add.isVisible;
+            bool addMode = _net != null && _net.isVisible;
             bool decalMode = _decal != null && _decal.isVisible;
             bool propMode = _prop != null && _prop.isVisible;
             bool lockMode = _lock != null && _lock.isVisible;
             bool select = addMode || decalMode || propMode || lockMode;
 
-            float section = addMode ? (_advOpen ? Mathf.Max(_addHeight, _advHeight) : _addHeight) : decalMode ? _decalHeight : propMode ? _propHeight : lockMode ? _lockHeight : 0f;
+            float section = addMode ? _netHeight : decalMode ? _decalHeight : propMode ? _propHeight : lockMode ? _lockHeight : 0f;
             float barY = ContentTop + section;
             float need = select ? barY + 42f + 24f : ContentTop + 30f;
 
@@ -1277,13 +1203,13 @@ namespace QuayTools
             _status.relativePosition = new Vector3(12f, select ? barY + 42f : ContentTop);
         }
 
-        // ---------- decal path section ----------
+        // ---------- texture path section ----------
 
-        /// <summary>A label, a slider and a value field (metres) in one block; returns the y of the next block.</summary>
+        /// <summary>A label, a slider and a value field (metres) in one block; the slider ends right before the value field. Returns the y of the next block.</summary>
         private float MakeValueRow(UIComponent parent, float y, string labelKey, float min, float max, float reset,
                                    out UISlider slider, out UITextField field, Action<int> onValue)
         {
-            UISlider sl = MakeSlider(parent, 12f, y + 20f, PanelWidth - 24f, min, max, reset);
+            UISlider sl = MakeSlider(parent, 12f, y + 20f, PanelWidth - 114f, min, max, reset);
             UITextField fl = null;
             MakeLabel(parent, Loc.T(labelKey), 12f, y, 0.72f);
             MakeLabel(parent, Loc.T("meter").Trim(), PanelWidth - 24f, y + 21f, 0.72f);
@@ -1306,13 +1232,43 @@ namespace QuayTools
         private void BuildDecalSection()
         {
             _decal = AddUIComponent<UIPanel>();
-            _decal.width = PanelWidth;
+            _decal.width = PanelWidth * 2f;
             _decal.relativePosition = new Vector3(0f, ContentTop);
             _decal.isVisible = false;
 
+            _decalRight = _decal.AddUIComponent<UIPanel>();
+            _decalRight.width = PanelWidth;
+            _decalRight.relativePosition = new Vector3(PanelWidth, 0f);
+
+            // ---- left column: paths, decal chooser, size
             float y = 0f;
             _decalSel = MakeLabel(_decal, string.Empty, 12f, y, 0.85f);
-            y += 26f;
+            y += 24f;
+
+            _decalPrev = MakeSmallButton(_decal, 10f, y, 34f, "<", delegate { StepDecal(-1); });
+            _decalNav = MakeLabel(_decal, string.Empty, 54f, y + 8f, 0.8f);
+            _decalNext = MakeSmallButton(_decal, PanelWidth - 44f, y, 34f, ">", delegate { StepDecal(1); });
+            y += 36f;
+
+            _dAdd = _decal.AddUIComponent<UIButton>();
+            _dAdd.width = PanelWidth - 20f;
+            _dAdd.height = 32f;
+            _dAdd.relativePosition = new Vector3(10f, y);
+            StyleButton(_dAdd);
+            _dAdd.text = "+  " + Loc.T("tpath_add");
+            _dAdd.textScale = 0.85f;
+            _dAdd.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool == null) return;
+                ClosePopup();
+                _decalIndex = int.MaxValue; // show the new (last) path once it exists
+                DecalSettings template = new DecalSettings();
+                template.Prop = _lastDecalProp;
+                if (_lastDecalProp != null) template.Scale = _lastDecalScale;
+                tool.AddDecal(template);
+            };
+            y += 38f;
 
             // decal chooser
             _decalUi = new PickerUi();
@@ -1344,26 +1300,35 @@ namespace QuayTools
             y += 44f;
 
             y = MakeValueRow(_decal, y, "dwidth", DecalStore.MinWidth, DecalStore.MaxWidth, DecalSettings.DefaultWidth, out _dWidth, out _dWidthV,
-                delegate (int u) { OnDecalValue("width", u, delegate (DecalSettings d, int v) { d.Width = v; }); });
+                delegate (int u) { OnDecalValue("width", delegate (DecalSettings d) { d.Width = u; }); });
             y = MakeValueRow(_decal, y, "dscale", DecalStore.MinScale, DecalStore.MaxScale, DecalSettings.DefaultScale, out _dScale, out _dScaleV,
-                delegate (int u) { OnDecalValue("scale", u, delegate (DecalSettings d, int v) { d.Scale = v; }); });
+                delegate (int u) { OnDecalValue("scale", delegate (DecalSettings d) { d.Scale = u; }); });
             y = MakeValueRow(_decal, y, "dstep", 0, DecalStore.MaxStep, 0f, out _dStep, out _dStepV,
-                delegate (int u) { OnDecalValue("step", u, delegate (DecalSettings d, int v) { d.Step = v; }); });
+                delegate (int u) { OnDecalValue("step", delegate (DecalSettings d) { d.Step = u; }); });
             y = MakeValueRow(_decal, y, "dbox", DecalStore.MinBox, DecalStore.MaxBox, DecalSettings.DefaultBox, out _dBox, out _dBoxV,
-                delegate (int u) { OnDecalValue("box", u, delegate (DecalSettings d, int v) { d.Box = v; }); });
-            y = MakeValueRow(_decal, y, "dlateral", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _dLateral, out _dLateralV,
-                delegate (int u) { OnDecalValue("lateral", u, delegate (DecalSettings d, int v) { d.Lateral = v; }); });
-            y = MakeValueRow(_decal, y, "dlift", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _dLift, out _dLiftV,
-                delegate (int u) { OnDecalValue("lift", u, delegate (DecalSettings d, int v) { d.Lift = v; }); });
+                delegate (int u) { OnDecalValue("box", delegate (DecalSettings d) { d.Box = u; }); });
+            float leftBottom = y;
 
-            MakeLabel(_decal, Loc.T("dcolor"), 12f, y, 0.72f);
-            _dSwatch = _decal.AddUIComponent<UIPanel>();
+            // ---- right column: position, rendering method, colour, buttons
+            float y2 = 0f;
+            y2 = MakeValueRow(_decalRight, y2, "dlateral", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _dLateral, out _dLateralV,
+                delegate (int u) { OnDecalValue("lateral", delegate (DecalSettings d) { d.Lateral = u; }); });
+            y2 = MakeValueRow(_decalRight, y2, "dlift", -FenceStore.MaxUnits, FenceStore.MaxUnits, 0f, out _dLift, out _dLiftV,
+                delegate (int u) { OnDecalValue("lift", delegate (DecalSettings d) { d.Lift = u; }); });
+
+            _dStrip = MakeToggle(_decalRight, 10f, y2, PanelWidth - 20f, "dstrip", null,
+                delegate (bool v) { OnDecalValue("strip", delegate (DecalSettings d) { d.Strip = v; }); });
+            _dStrip.Button.tooltip = Loc.T("dstrip_tip");
+            y2 += 38f;
+
+            MakeLabel(_decalRight, Loc.T("dcolor"), 12f, y2, 0.72f);
+            _dSwatch = _decalRight.AddUIComponent<UIPanel>();
             _dSwatch.size = new Vector2(40f, 18f);
-            _dSwatch.relativePosition = new Vector3(PanelWidth - 140f, y - 1f);
+            _dSwatch.relativePosition = new Vector3(PanelWidth - 140f, y2 - 1f);
             _dSwatch.backgroundSprite = "GenericPanel";
             _dSwatch.isInteractive = false;
-            _dHex = MakeHexField(_decal, PanelWidth - 94f, y - 1f);
-            y += 24f;
+            _dHex = MakeHexField(_decalRight, PanelWidth - 94f, y2 - 1f);
+            y2 += 24f;
 
             string[] channelNames = { "R", "G", "B", "A" };
             _dRgba = new UISlider[4];
@@ -1371,10 +1336,10 @@ namespace QuayTools
             for (int i = 0; i < 4; i++)
             {
                 int channel = i;
-                MakeLabel(_decal, channelNames[i], 12f, y, 0.72f);
-                UISlider sl = MakeSlider(_decal, 30f, y, PanelWidth - 30f - 50f, 0f, 255f, 255f);
+                MakeLabel(_decalRight, channelNames[i], 12f, y2, 0.72f);
+                UISlider sl = MakeSlider(_decalRight, 30f, y2, PanelWidth - 30f - 50f, 0f, 255f, 255f);
                 _dRgba[i] = sl;
-                _dRgbaV[i] = MakeLabel(_decal, "255", PanelWidth - 40f, y, 0.72f);
+                _dRgbaV[i] = MakeLabel(_decalRight, "255", PanelWidth - 40f, y2, 0.72f);
                 sl.eventValueChanged += delegate (UIComponent c, float v)
                 {
                     if (_colorSync) return;
@@ -1383,51 +1348,61 @@ namespace QuayTools
                     UpdateColorUi();
                     PushColor();
                 };
-                y += 22f;
+                y2 += 22f;
             }
             UpdateColorUi();
-            y += 8f;
+            y2 += 8f;
 
-            _decalState = MakeLabel(_decal, string.Empty, 12f, y, 0.75f);
-            y += 22f;
-
-            _dAdd = _decal.AddUIComponent<UIButton>();
-            _dAdd.width = PanelWidth - 20f;
-            _dAdd.height = 32f;
-            _dAdd.relativePosition = new Vector3(10f, y);
-            StyleButton(_dAdd);
-            _dAdd.text = Loc.T("decal_add");
-            _dAdd.textScale = 0.85f;
-            _dAdd.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
-            {
-                QuayTool tool = QuayTool.Instance;
-                if (tool == null) return;
-                ClosePopup();
-                tool.AddDecal(_brush);
-            };
-            y += 38f;
-
-            _dRemove = _decal.AddUIComponent<UIButton>();
+            _dRemove = _decalRight.AddUIComponent<UIButton>();
             _dRemove.width = PanelWidth - 20f;
             _dRemove.height = 32f;
-            _dRemove.relativePosition = new Vector3(10f, y);
+            _dRemove.relativePosition = new Vector3(10f, y2);
             StyleButton(_dRemove);
-            _dRemove.text = Loc.T("decal_remove");
+            _dRemove.text = Loc.T("tpath_remove");
             _dRemove.textScale = 0.85f;
             _dRemove.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
             {
                 QuayTool tool = QuayTool.Instance;
-                if (tool != null) tool.RemoveDecal();
+                if (tool != null) tool.RemoveDecal(_decalIndex);
             };
-            y += 38f;
+            y2 += 38f;
 
-            _decalHeight = y;
+            _dClear = _decalRight.AddUIComponent<UIButton>();
+            _dClear.width = PanelWidth - 20f;
+            _dClear.height = 32f;
+            _dClear.relativePosition = new Vector3(10f, y2);
+            StyleButton(_dClear);
+            _dClear.text = Loc.T("tpath_clear");
+            _dClear.textScale = 0.85f;
+            _dClear.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool == null) return;
+                ClosePopup();
+                tool.ClearDecals();
+            };
+            y2 += 38f;
+
+            _decalState = MakeLabel(_decalRight, string.Empty, 12f, y2, 0.75f);
+            y2 += 22f;
+
+            _decalHeight = Mathf.Max(leftBottom, y2) + 4f;
 
             // the list is created last so that it is drawn above the controls below its button
             BuildPopup(_decalUi);
         }
 
-        /// <summary>A decal was chosen in the list: remember it, use its natural size as tile size, apply it to existing paths.</summary>
+        private void StepDecal(int direction)
+        {
+            if (_decalCount < 2) return;
+            _decalIndex += direction;
+            if (_decalIndex >= _decalCount) _decalIndex = 0;
+            if (_decalIndex < 0) _decalIndex = _decalCount - 1;
+            ClosePopup();
+            LoadDecalFromSelection();
+        }
+
+        /// <summary>A decal was chosen in the list: use its natural size as tile size and apply both to the current path.</summary>
         private void OnDecalPicked(PickItem item)
         {
             DecalEntry entry = item == null ? null : (DecalEntry)item.Tag;
@@ -1445,12 +1420,15 @@ namespace QuayTools
                 _brush.Scale = scale;
             }
             _brush.Prop = prop;
+            _dStrip.Button.isEnabled = prop != null;
+            _lastDecalProp = prop;
+            if (entry != null) _lastDecalScale = scale;
 
             QuayTool tool = QuayTool.Instance;
             if (tool == null) return;
             int applyScale = scale;
             bool setScale = entry != null;
-            tool.EditDecal("prop", delegate (DecalSettings d)
+            tool.EditDecal(_decalIndex, "prop", delegate (DecalSettings d)
             {
                 d.Prop = prop;
                 if (setScale) d.Scale = applyScale;
@@ -1497,7 +1475,7 @@ namespace QuayTools
             return "#" + d.R.ToString("X2") + d.G.ToString("X2") + d.B.ToString("X2") + d.A.ToString("X2");
         }
 
-        /// <summary>Shows the brush colour in the sliders, the swatch and the hex field (without pushing it anywhere).</summary>
+        /// <summary>Shows the colour of the current path in the sliders, the swatch and the hex field (without pushing it anywhere).</summary>
         private void UpdateColorUi()
         {
             if (_dRgba == null || _brush == null) return;
@@ -1521,14 +1499,14 @@ namespace QuayTools
             }
         }
 
-        /// <summary>Applies the brush colour to the selected paths (one undo step while dragging).</summary>
+        /// <summary>Applies the colour to the current path of the selected segments (one undo step while dragging).</summary>
         private void PushColor()
         {
             if (_loading) return;
             QuayTool tool = QuayTool.Instance;
             if (tool == null) return;
             byte r = _brush.R, g = _brush.G, b = _brush.B, a = _brush.A;
-            tool.EditDecal("color", delegate (DecalSettings d) { d.R = r; d.G = g; d.B = b; d.A = a; });
+            tool.EditDecal(_decalIndex, "color", delegate (DecalSettings d) { d.R = r; d.G = g; d.B = b; d.A = a; });
         }
 
         private UITextField MakeHexField(UIComponent parent, float x, float y)
@@ -1580,17 +1558,17 @@ namespace QuayTools
             _dHex.text = HexOf(_brush); // invalid or unchanged: show the current value
         }
 
-        /// <summary>A decal slider moved: remember it for the next "add" and apply it to the selected paths.</summary>
-        private void OnDecalValue(string property, int units, Action<DecalSettings, int> set)
+        /// <summary>A decal slider moved: keep the shown values in step and apply it to the current path of the selected segments.</summary>
+        private void OnDecalValue(string key, Action<DecalSettings> apply)
         {
-            set(_brush, units);
+            apply(_brush);
             if (_loading) return;
 
             QuayTool tool = QuayTool.Instance;
-            if (tool != null) tool.EditDecal(property, delegate (DecalSettings d) { set(d, units); });
+            if (tool != null) tool.EditDecal(_decalIndex, key, apply);
         }
 
-        /// <summary>Shows the first selected path in the controls; without a path the controls keep their values.</summary>
+        /// <summary>Shows the current path of the first selected segment that has any.</summary>
         private void LoadDecalFromSelection()
         {
             if (_decal == null) return;
@@ -1602,101 +1580,75 @@ namespace QuayTools
             try
             {
                 _decalSel.text = Loc.T("selected") + count;
-                SetDecalControlsEnabled(count > 0);
 
+                DecalSet set = null;
                 int have = 0;
-                DecalSettings first = null;
                 for (int i = 0; i < count; i++)
                 {
-                    DecalSettings d;
-                    if (DecalStore.TryGet(tool.Selection[i], out d))
+                    DecalSet s;
+                    if (DecalStore.TryGet(tool.Selection[i], out s) && s.Paths.Count > 0)
                     {
                         have++;
-                        if (first == null) first = d;
+                        if (set == null) set = s;
                     }
                 }
 
-                if (first != null)
-                {
-                    _brush.Width = first.Width;
-                    _brush.Lateral = first.Lateral;
-                    _brush.Lift = first.Lift;
-                    _brush.R = first.R;
-                    _brush.G = first.G;
-                    _brush.B = first.B;
-                    _brush.A = first.A;
-                    _brush.Prop = first.Prop;
-                    _brush.Scale = first.Scale;
+                _decalCount = set == null ? 0 : set.Paths.Count;
+                _decalIndex = _decalCount == 0 ? 0 : Mathf.Clamp(_decalIndex, 0, _decalCount - 1);
+                if (tool != null) tool.ActiveLine = _decalCount == 0 ? -1 : _decalIndex;
+                DecalSettings d = set != null ? set.Paths[_decalIndex] : new DecalSettings();
 
-                    _dWidth.value = first.Width;
-                    _dScale.value = first.Scale;
-                    _brush.Step = first.Step;
-                    _brush.Box = first.Box;
-                    _dStep.value = first.Step;
-                    _dBox.value = first.Box;
-                    _dLateral.value = first.Lateral;
-                    _dLift.value = first.Lift;
-                    UpdateColorUi();
-                }
+                _decalNav.text = _decalCount == 0 ? Loc.T("tpath_nolines") : Loc.F("tpath_nav", _decalIndex + 1, _decalCount);
 
+                _brush.Width = d.Width;
+                _brush.Lateral = d.Lateral;
+                _brush.Lift = d.Lift;
+                _brush.R = d.R;
+                _brush.G = d.G;
+                _brush.B = d.B;
+                _brush.A = d.A;
+                _brush.Prop = d.Prop;
+                _brush.Scale = d.Scale;
+                _brush.Step = d.Step;
+                _brush.Box = d.Box;
+                _brush.Strip = d.Strip;
+
+                _dWidth.value = d.Width;
+                _dScale.value = d.Scale;
+                _dStep.value = d.Step;
+                _dBox.value = d.Box;
+                _dLateral.value = d.Lateral;
+                _dLift.value = d.Lift;
                 _dWidthV.text = FormatOffset(_dWidth.value);
                 _dScaleV.text = FormatOffset(_dScale.value);
                 _dStepV.text = FormatOffset(_dStep.value);
                 _dBoxV.text = FormatOffset(_dBox.value);
                 _dLateralV.text = FormatOffset(_dLateral.value);
                 _dLiftV.text = FormatOffset(_dLift.value);
+                SetToggle(_dStrip, d.Strip);
+                UpdateColorUi();
                 ShowBrushHeader();
+
+                bool any = count > 0, has = _decalCount > 0;
+                _dAdd.isEnabled = any;
+                _decalPrev.isEnabled = has && _decalCount > 1;
+                _decalNext.isEnabled = has && _decalCount > 1;
+                _dRemove.isEnabled = has;
+                _dClear.isEnabled = has;
+                _decalUi.Header.isEnabled = has;
+                UISlider[] sliders = { _dWidth, _dScale, _dStep, _dBox, _dLateral, _dLift };
+                for (int i = 0; i < sliders.Length; i++) sliders[i].isEnabled = has;
+                for (int i = 0; i < _dRgba.Length; i++) _dRgba[i].isEnabled = has;
+                _dHex.isEnabled = has;
+                _dStrip.Button.isEnabled = has && d.Prop != null;
+                if (_resetBtn != null) _resetBtn.isEnabled = has;
+
                 _decalState.text = Loc.F("decal_state", have, count);
             }
             finally
             {
                 _loading = false;
             }
-        }
-
-        /// <summary>Puts the decal controls (the values used for the next "add") back to their defaults.</summary>
-        private void ResetDecalBrush()
-        {
-            _loading = true;
-            try
-            {
-                string keepProp = _brush.Prop; // like fence models, the chosen decal stays
-                _brush.ResetToDefaults();
-                _brush.Prop = keepProp;
-                _dWidth.value = _brush.Width;
-                _dScale.value = _brush.Scale;
-                _dScaleV.text = FormatOffset(_dScale.value);
-                _dStep.value = _brush.Step;
-                _dStepV.text = FormatOffset(_dStep.value);
-                _dBox.value = _brush.Box;
-                _dBoxV.text = FormatOffset(_dBox.value);
-                _dLateral.value = _brush.Lateral;
-                _dLift.value = _brush.Lift;
-                _dWidthV.text = FormatOffset(_dWidth.value);
-                _dLateralV.text = FormatOffset(_dLateral.value);
-                _dLiftV.text = FormatOffset(_dLift.value);
-                UpdateColorUi();
-            }
-            finally
-            {
-                _loading = false;
-            }
-        }
-
-        private void SetDecalControlsEnabled(bool enabled)
-        {
-            _dWidth.isEnabled = enabled;
-            _dScale.isEnabled = enabled;
-            _dStep.isEnabled = enabled;
-            _dBox.isEnabled = enabled;
-            _decalUi.Header.isEnabled = enabled;
-            _dLateral.isEnabled = enabled;
-            _dLift.isEnabled = enabled;
-            _dAdd.isEnabled = enabled;
-            _dRemove.isEnabled = enabled;
-            for (int i = 0; i < _dRgba.Length; i++) _dRgba[i].isEnabled = enabled;
-            _dHex.isEnabled = enabled;
-            if (_resetBtn != null) _resetBtn.isEnabled = enabled;
         }
 
         // ---------- orientation lock section ----------
@@ -1858,17 +1810,30 @@ namespace QuayTools
                 delegate (int u) { OnPropValue("lateral", delegate (PropEntry e) { e.Lateral = u; }); });
             y2 = MakeValueRow(_propRight, y2, "plift", -PropEntry.MaxOffset, PropEntry.MaxOffset, 0f, out _pLift, out _pLiftV,
                 delegate (int u) { OnPropValue("lift", delegate (PropEntry e) { e.Lift = u; }); });
-            y2 = MakeIntRow(_propRight, y2, "pangle", 0, 359, 0, " °", out _pAngle, out _pAngleV,
+            // rotation controls are hidden for trees (a tree has no direction); they sit in their own panel
+            const float RotHeight = 44f + 36f;
+            _propRot = _propRight.AddUIComponent<UIPanel>();
+            _propRot.width = PanelWidth;
+            _propRot.height = RotHeight;
+            _propRot.relativePosition = new Vector3(0f, y2);
+            float yr = 0f;
+            yr = MakeIntRow(_propRot, yr, "pangle", 0, 359, 0, " °", out _pAngle, out _pAngleV,
                 delegate (int u) { OnPropValue("angle", delegate (PropEntry e) { e.Angle = u; }); });
-            _pRotate = MakeToggle(_propRight, 10f, y2, PanelWidth - 20f, "prandrot", null,
+            _pRotate = MakeToggle(_propRot, 10f, yr, PanelWidth - 20f, "prandrot", null,
                 delegate (bool v) { OnPropValue("rotate", delegate (PropEntry e) { e.RandomRotation = v; }); });
-            y2 += 36f;
-            y2 = MakeIntRow(_propRight, y2, "pscale", PropEntry.ScaleMin, PropEntry.ScaleMax, PropEntry.ScaleDefault, " %", out _pScale, out _pScaleV,
+            y2 += RotHeight;
+
+            _propRest = _propRight.AddUIComponent<UIPanel>();
+            _propRest.width = PanelWidth;
+            _propRest.relativePosition = new Vector3(0f, y2);
+            float restTop = y2;
+            y2 = 0f;
+            y2 = MakeIntRow(_propRest, y2, "pscale", PropEntry.ScaleMin, PropEntry.ScaleMax, PropEntry.ScaleDefault, " %", out _pScale, out _pScaleV,
                 delegate (int u) { OnPropValue("scale", delegate (PropEntry e) { e.Scale = u; }); });
-            y2 = MakeIntRow(_propRight, y2, "prandscale", 0, PropEntry.RandomMax, 0, " %", out _pRand, out _pRandV,
+            y2 = MakeIntRow(_propRest, y2, "prandscale", 0, PropEntry.RandomMax, 0, " %", out _pRand, out _pRandV,
                 delegate (int u) { OnPropValue("rand", delegate (PropEntry e) { e.ScaleRandom = u; }); });
 
-            _propRemove = _propRight.AddUIComponent<UIButton>();
+            _propRemove = _propRest.AddUIComponent<UIButton>();
             _propRemove.width = PanelWidth - 20f;
             _propRemove.height = 32f;
             _propRemove.relativePosition = new Vector3(10f, y2);
@@ -1882,7 +1847,7 @@ namespace QuayTools
             };
             y2 += 38f;
 
-            _propClear = _propRight.AddUIComponent<UIButton>();
+            _propClear = _propRest.AddUIComponent<UIButton>();
             _propClear.width = PanelWidth - 20f;
             _propClear.height = 32f;
             _propClear.relativePosition = new Vector3(10f, y2);
@@ -1898,10 +1863,13 @@ namespace QuayTools
             };
             y2 += 38f;
 
-            _propState = MakeLabel(_propRight, string.Empty, 12f, y2, 0.75f);
+            _propState = MakeLabel(_propRest, string.Empty, 12f, y2, 0.75f);
             y2 += 22f;
 
-            _propHeight = Mathf.Max(leftBottom, y2) + 4f;
+            _propRest.height = y2;
+            _propHeightFull = Mathf.Max(leftBottom, restTop + y2) + 4f;
+            _propHeightTree = Mathf.Max(leftBottom, restTop - RotHeight + y2) + 4f;
+            _propHeight = _propHeightFull;
 
             // the list is created last so that it is drawn above the controls below its button
             BuildPopup(_propUi);
@@ -1914,9 +1882,26 @@ namespace QuayTools
             if (tool != null) tool.EditPropEntry(_propIndex, key, apply);
         }
 
+        /// <summary>A tree has no direction: the rotation controls are hidden for it and the controls below move up.</summary>
+        private void UpdateRotationControls(string prop)
+        {
+            bool isTree = false;
+            if (!string.IsNullOrEmpty(prop))
+            {
+                PropInfo pi;
+                TreeInfo ti;
+                isTree = PropCatalog.Resolve(prop, out pi, out ti) && ti != null;
+            }
+            _propRot.isVisible = !isTree;
+            _propRest.relativePosition = new Vector3(0f, _propRot.relativePosition.y + (isTree ? 0f : _propRot.height));
+            _propHeight = isTree ? _propHeightTree : _propHeightFull;
+            UpdateHeight();
+        }
+
         private void OnPropPicked(PickItem item)
         {
             string name = item == null ? null : ((PropCatalogEntry)item.Tag).Key;
+            UpdateRotationControls(name);
             QuayTool tool = QuayTool.Instance;
             if (tool != null) tool.EditPropEntry(_propIndex, "prop", delegate (PropEntry e) { e.Prop = name; });
         }
@@ -2004,6 +1989,7 @@ namespace QuayTools
                 _pRandV.text = e.ScaleRandom.ToString();
                 SetToggle(_pRotate, e.RandomRotation);
                 ShowPropHeader(e.Prop);
+                UpdateRotationControls(e.Prop);
 
                 bool any = count > 0, has = _propCount > 0;
                 _propAdd.isEnabled = any;
@@ -2050,7 +2036,6 @@ namespace QuayTools
             {
                 QuayTool tool = QuayTool.Instance;
                 if (tool == null) return;
-                if (tool.CurrentMode == QuayTool.Mode.Decal) ResetDecalBrush();
                 tool.ResetSelection();
             });
         }
@@ -2108,9 +2093,9 @@ namespace QuayTools
                 if (!_built) return false;
                 UITextField[] fields =
                 {
-                    _landUi.HValue, _landUi.VValue, _waterUi.HValue, _waterUi.VValue, _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dHex,
-                    _landUi.S0V, _landUi.S1V, _waterUi.S0V, _waterUi.S1V, _landUi.ScaleV, _waterUi.ScaleV, _pAngleV, _pScaleV, _pRandV,
-                    _landUi.Search, _waterUi.Search, _decalUi.Search, _propUi.Search, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV
+                    _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dHex,
+                    _nStartV, _nEndV, _nLateralV, _nLiftV, _nScaleV, _pAngleV, _pScaleV, _pRandV,
+                    _netUi.Search, _decalUi.Search, _propUi.Search, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV
                 };
                 for (int i = 0; i < fields.Length; i++)
                 {

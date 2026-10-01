@@ -24,6 +24,26 @@ namespace QuayTools
             get { return _entries; }
         }
 
+        private static readonly Dictionary<string, NetInfo> _byName = new Dictionary<string, NetInfo>();
+
+        /// <summary>A network model by its prefab name (null when it is not loaded).</summary>
+        public static NetInfo Find(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            NetInfo info;
+            if (_byName.TryGetValue(name, out info) && info != null) return info;
+            try
+            {
+                info = PrefabCollection<NetInfo>.FindLoaded(name);
+            }
+            catch (Exception)
+            {
+                info = null;
+            }
+            if (info != null) _byName[name] = info;
+            return info;
+        }
+
         public static void Refresh()
         {
             _entries.Clear();

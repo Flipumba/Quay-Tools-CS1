@@ -59,13 +59,8 @@ namespace QuayTools
             _next = Time.realtimeSinceStartup + RefreshSeconds;
 
             _marks.Clear();
-            List<ushort> keys = FenceStore.Keys();
-            for (int i = 0; i < keys.Count; i++)
-            {
-                // a fence entry exists only after a model or a setting was applied; models are what the icon stands for
-                NetSegment s = NetManager.instance.m_segments.m_buffer[keys[i]];
-                if (s.LeftFenceInfo != null || s.RightFenceInfo != null) Add(keys[i], 1);
-            }
+            List<ushort> keys = NetLineStore.Keys();
+            for (int i = 0; i < keys.Count; i++) Add(keys[i], 1);
             keys = DecalStore.Keys();
             for (int i = 0; i < keys.Count; i++) Add(keys[i], 2);
             keys = PropLineStore.Keys();
