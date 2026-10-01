@@ -134,6 +134,7 @@ namespace QuayTools
         private UITextField _dHex;
         private bool _colorSync;
         private UIButton _dAdd, _dRemove, _dClear, _decalPrev, _decalNext;
+        private const int StripDefaultLift = 10;
         private Toggle _dStrip;
         private int _decalIndex;
         private int _decalCount;
@@ -1317,7 +1318,21 @@ namespace QuayTools
                 delegate (int u) { OnDecalValue("lift", delegate (DecalSettings d) { d.Lift = u; }); });
 
             _dStrip = MakeToggle(_decalRight, 10f, y2, PanelWidth - 20f, "dstrip", null,
-                delegate (bool v) { OnDecalValue("strip", delegate (DecalSettings d) { d.Strip = v; }); });
+                delegate (bool v)
+                {
+                    // the strip lies lower than the quay surface: its default height is 1 m (units of 0.1 m); switching back restores 0
+                    OnDecalValue("strip", delegate (DecalSettings d)
+                    {
+                        if (v && d.Lift == 0) d.Lift = StripDefaultLift;
+                        else if (!v && d.Lift == StripDefaultLift) d.Lift = 0;
+                        d.Strip = v;
+                    });
+                    bool was = _loading;
+                    _loading = true;
+                    _dLift.value = _brush.Lift;
+                    _dLiftV.text = FormatOffset(_dLift.value);
+                    _loading = was;
+                });
             _dStrip.Button.tooltip = Loc.T("dstrip_tip");
             y2 += 38f;
 

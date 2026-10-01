@@ -21,6 +21,8 @@ namespace QuayTools
 
             Debug.Log("[QuayTools] OnLevelLoaded, mode=" + mode);
 
+            HarmonySetup.ApplyLate();
+
             try
             {
                 Bootstrap.Init();

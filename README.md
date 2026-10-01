@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.5.1**
+**Version: v0.5.2**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -202,6 +202,12 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.5.2
+- Fixed: network-model lines disappeared after the first frame (the renderer disabled itself); it now recovers from errors.
+- Fixed: "Remove pedestrian path" had no effect when TM:PE is installed (TM:PE runs its own path-finder class); the mod now patches those classes too and logs what it patched.
+- Texture-path strip mode: the default height is now 1 m (set when the strip switch is turned on).
+- Texture-path strips whose texture has no transparency (and with full opacity) now use the game's lit shader: shadows fall on them and the brightness matches the surroundings. Semi-transparent strips stay unlit.
 
 ### v0.5.1
 - Fixed: network-model lines were invisible when another mod patches the game's segment rendering (for example Adaptive Roads): the models are now submitted directly (same shader inputs as the game), not through the patched routine.

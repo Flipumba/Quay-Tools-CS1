@@ -483,7 +483,9 @@ namespace QuayTools
         /// <summary>Called by the game's network rendering (patch on NetManager.EndRenderingImpl), before it flushes its LOD batches.</summary>
         internal void Render(RenderManager.CameraInfo cameraInfo)
         {
-            if (_failed || cameraInfo == null) return;
+            if (cameraInfo == null || _ids.Count == 0) return;
+            FindMethods(); // the first frame can come before the first build
+            if (_failed) return;
 
             NetManager nm = NetManager.instance;
             MaterialPropertyBlock block = _materialBlock.GetValue(nm) as MaterialPropertyBlock;
@@ -501,6 +503,7 @@ namespace QuayTools
                 for (int p = 0; p < item.Parts.Count; p++)
                 {
                     Part part = item.Parts[p];
+                    if (part == null || part.Segs == null) continue;
                     float reach = MaxDistance + part.Radius;
                     if ((part.Centre - cam).sqrMagnitude > reach * reach) continue;
 
@@ -508,6 +511,7 @@ namespace QuayTools
                     for (int k = 0; k < part.Segs.Length; k++)
                     {
                         NetInfo.Segment s = part.Segs[k];
+                        if (s == null || s.m_segmentMesh == null || s.m_segmentMaterial == null) continue;
 
                         Vector4 objectIndex = data.m_dataVector3;
                         if (s.m_requireWindSpeed) objectIndex.w = data.m_dataFloat0;
@@ -558,7 +562,7 @@ namespace QuayTools.Patches
     [HarmonyLib.HarmonyPatch]
     internal static class NetLineRenderPatch
     {
-        private static bool _failed;
+        private static int _errors;
 
         public static System.Reflection.MethodBase TargetMethod()
         {
@@ -569,7 +573,7 @@ namespace QuayTools.Patches
 
         public static void Prefix(RenderManager.CameraInfo __0)
         {
-            if (_failed) return;
+            if (_errors >= 5) return;
             try
             {
                 NetLineRenderer r = NetLineRenderer.Instance;
@@ -577,8 +581,8 @@ namespace QuayTools.Patches
             }
             catch (System.Exception ex)
             {
-                _failed = true;
-                UnityEngine.Debug.LogError("[QuayTools] Network line rendering failed, disabled: " + ex);
+                _errors++;
+                UnityEngine.Debug.LogError("[QuayTools] Network line rendering error " + _errors + (_errors >= 5 ? " (disabled)" : string.Empty) + ": " + ex);
             }
         }
     }

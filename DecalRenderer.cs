@@ -69,6 +69,10 @@ namespace QuayTools
         private readonly List<ushort> _dead = new List<ushort>();
         private readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
         private Material _plain;
+        private Shader _litShader;            // opaque lit shader (receives shadows): used for fully opaque strips
+        private Material _litPlain;
+        private readonly Dictionary<PropInfo, Material> _litSimple = new Dictionary<PropInfo, Material>();
+        private readonly HashSet<PropInfo> _opaque = new HashSet<PropInfo>();
         private readonly Dictionary<PropInfo, Material> _simple = new Dictionary<PropInfo, Material>();
         private readonly Dictionary<PropInfo, Texture2D> _composite = new Dictionary<PropInfo, Texture2D>();
         private readonly HashSet<PropInfo> _compositeFailed = new HashSet<PropInfo>();
@@ -89,6 +93,12 @@ namespace QuayTools
             _items.Clear();
 
             if (_plain != null) Destroy(_plain);
+            if (_litPlain != null) Destroy(_litPlain);
+            foreach (KeyValuePair<PropInfo, Material> kv in _litSimple)
+            {
+                if (kv.Value != null) Destroy(kv.Value);
+            }
+            _litSimple.Clear();
 
             foreach (KeyValuePair<PropInfo, Material> kv in _simple)
             {
@@ -936,7 +946,8 @@ namespace QuayTools
                     PropInfo info = item.Prop;
                     if (info.m_material == null) continue;
 
-                    Material simple = GetCompositeMaterial(info);
+                    Material lit = receive && tint.a >= 0.99f ? GetLitCompositeMaterial(info) : null;
+                    Material simple = lit != null ? lit : GetCompositeMaterial(info);
                     if (simple == null) continue;
                     _block.Clear();
                     _block.SetColor("_Color", tint);
@@ -944,7 +955,8 @@ namespace QuayTools
                 }
                 else
                 {
-                    Material m = GetPlainMaterial();
+                    Material m = receive && tint.a >= 0.99f ? GetLitPlainMaterial() : null;
+                    if (m == null) m = GetPlainMaterial();
                     if (m == null) continue; // no usable shader, already logged
                     _block.Clear();
                     _block.SetColor("_Color", tint);
@@ -995,6 +1007,42 @@ namespace QuayTools
             Debug.Log("[QuayTools] Lit shader candidates among the loaded shaders:" + (names.Length > 0 ? names.ToString() : " none") +
                 (best != null ? "\n  -> using " + best.name : string.Empty));
             return best;
+        }
+
+        private Shader FindLitOpaque()
+        {
+            if (_litShader == null)
+            {
+                string[] names = { "Legacy Shaders/Diffuse", "Diffuse", "Mobile/Diffuse" };
+                for (int i = 0; i < names.Length && _litShader == null; i++) _litShader = Shader.Find(names[i]);
+                if (_litShader != null) Debug.Log("[QuayTools] Opaque texture-path strips use the lit shader " + _litShader.name + " (shadows fall on them)");
+            }
+            return _litShader;
+        }
+
+        /// <summary>Lit material for a strip whose texture has no transparency (shadows and the game's lighting apply).</summary>
+        private Material GetLitCompositeMaterial(PropInfo info)
+        {
+            if (FindLitOpaque() == null) return null;
+            Texture tex = GetCompositeTexture(info);
+            if (tex == null || !_opaque.Contains(info)) return null;
+
+            Material m;
+            if (_litSimple.TryGetValue(info, out m) && m != null) return m;
+            m = new Material(_litShader);
+            m.mainTexture = tex;
+            m.renderQueue = 2001;
+            _litSimple[info] = m;
+            return m;
+        }
+
+        private Material GetLitPlainMaterial()
+        {
+            if (FindLitOpaque() == null) return null;
+            if (_litPlain != null) return _litPlain;
+            _litPlain = new Material(_litShader);
+            _litPlain.renderQueue = 2001;
+            return _litPlain;
         }
 
         private Shader EnsureShader()
@@ -1135,6 +1183,10 @@ namespace QuayTools
                 {
                     for (int i = 0; i < px.Length; i++) px[i].a = 255; // no opacity information at all: opaque
                 }
+
+                int minAlpha = 255;
+                for (int i = 0; i < px.Length; i++) minAlpha = Mathf.Min(minAlpha, px[i].a);
+                if (minAlpha >= 250) _opaque.Add(info);
 
                 t = new Texture2D(w, h, TextureFormat.RGBA32, true);
                 t.name = "QuayTools decal " + info.name;

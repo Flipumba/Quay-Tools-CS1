@@ -110,19 +110,39 @@ namespace QuayTools
         private const int PedestrianLane = 2;   // NetInfo.LaneType.Pedestrian (PathFind tests m_laneTypes & 2 for walking)
         private const int VehicleLane = 1;      // NetInfo.LaneType.Vehicle
 
-        private static Func<object, int> _laneTypes;
+        // lane-type getters per path-finder class (the game's PathFind and classes derived from it, for example
+        // TM:PE's CustomPathFind, which runs its own copy of the search with its own fields); replaced as a whole when
+        // changed, so the path-finding threads can read it without a lock
+        private static Dictionary<Type, Func<object, int>> _getters = new Dictionary<Type, Func<object, int>>();
+        private static readonly HashSet<MethodBase> Patched = new HashSet<MethodBase>();
 
-        /// <summary>The lane types of the path the thread is searching right now (private field m_laneTypes), read through a compiled getter.</summary>
+        /// <summary>The lane types of the path the thread is searching right now: the field of the class that actually runs the search, read through a compiled getter.</summary>
         private static Func<object, int> MakeGetter(Type type)
         {
-            FieldInfo field = type.GetField("m_laneTypes", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            FieldInfo field = null;
+            for (Type t = type; t != null && field == null && t != typeof(object); t = t.BaseType)
+            {
+                FieldInfo[] fields = t.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly);
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    string n = fields[i].Name.Replace("_", string.Empty).ToLowerInvariant();
+                    if (n != "lanetypes") continue;
+                    Type ft = fields[i].FieldType;
+                    if (ft.IsEnum || ft == typeof(int) || ft == typeof(byte) || ft == typeof(uint) || ft == typeof(short) || ft == typeof(ushort))
+                    {
+                        field = fields[i];
+                        break;
+                    }
+                }
+            }
             if (field == null) return null;
 
-            System.Reflection.Emit.DynamicMethod dm = new System.Reflection.Emit.DynamicMethod("QuayTools_laneTypes", typeof(int), new Type[] { typeof(object) }, type, true);
+            System.Reflection.Emit.DynamicMethod dm = new System.Reflection.Emit.DynamicMethod("QuayTools_laneTypes", typeof(int), new Type[] { typeof(object) }, field.DeclaringType, true);
             System.Reflection.Emit.ILGenerator il = dm.GetILGenerator();
             il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
-            il.Emit(System.Reflection.Emit.OpCodes.Castclass, type);
+            il.Emit(System.Reflection.Emit.OpCodes.Castclass, field.DeclaringType);
             il.Emit(System.Reflection.Emit.OpCodes.Ldfld, field);
+            il.Emit(System.Reflection.Emit.OpCodes.Conv_I4);
             il.Emit(System.Reflection.Emit.OpCodes.Ret);
             return (Func<object, int>)dm.CreateDelegate(typeof(Func<object, int>));
         }
@@ -130,7 +150,9 @@ namespace QuayTools
         private static bool Skip(object pathFind, ushort segment)
         {
             if (!PedStore.Blocked[segment]) return false;
-            int lanes = _laneTypes(pathFind);
+            Func<object, int> getter;
+            if (pathFind == null || !_getters.TryGetValue(pathFind.GetType(), out getter) || getter == null) return false;
+            int lanes = getter(pathFind);
             return (lanes & PedestrianLane) != 0 && (lanes & VehicleLane) == 0;
         }
 
@@ -208,59 +230,104 @@ namespace QuayTools
             return false;
         }
 
+        /// <summary>Forgets what was patched (the patches themselves are removed by HarmonySetup.Revert).</summary>
+        public static void Reset()
+        {
+            Patched.Clear();
+        }
+
+        /// <summary>Patches PathFind and every class derived from it that has its own ProcessItem* methods. Safe to call again: only new methods are patched.</summary>
         public static void Apply(Harmony harmony)
         {
             try
             {
-                Type type = AccessTools.TypeByName("PathFind");
-                if (type == null)
+                Type baseType = AccessTools.TypeByName("PathFind");
+                if (baseType == null)
                 {
                     Debug.LogWarning("[QuayTools] PathFind not found: 'Remove pedestrian path' is unavailable");
                     return;
                 }
 
-                _laneTypes = MakeGetter(type);
-                if (_laneTypes == null)
+                List<Type> types = new List<Type>();
+                types.Add(baseType);
+                Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+                for (int a = 0; a < assemblies.Length; a++)
                 {
-                    Debug.LogWarning("[QuayTools] PathFind.m_laneTypes not found: 'Remove pedestrian path' is unavailable");
-                    return;
-                }
-
-                System.Text.StringBuilder all = new System.Text.StringBuilder();
-                int patched = 0;
-                MethodInfo[] methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-                for (int i = 0; i < methods.Length; i++)
-                {
-                    MethodInfo m = methods[i];
-                    if (!m.Name.StartsWith("ProcessItem", StringComparison.Ordinal)) continue;
-
-                    ParameterInfo[] ps = m.GetParameters();
-                    int index = -1;
-                    all.Append("\n  ").Append(m.ReturnType.Name).Append(' ').Append(m.Name).Append('(');
-                    for (int k = 0; k < ps.Length; k++)
-                    {
-                        all.Append(k > 0 ? ", " : string.Empty).Append(ps[k].ParameterType.Name).Append(' ').Append(ps[k].Name);
-                        if (index < 0 && ps[k].ParameterType == typeof(ushort) && ps[k].Name.IndexOf("segment", StringComparison.OrdinalIgnoreCase) >= 0) index = k;
-                    }
-                    all.Append(')');
-
-                    bool isBool = m.ReturnType == typeof(bool);
-                    if (index < 0 || index > 9 || (m.ReturnType != typeof(void) && !isBool)) continue;
-
+                    Type[] all;
                     try
                     {
-                        MethodInfo prefix = typeof(PedestrianPathPatch).GetMethod((isBool ? "B" : "P") + index, BindingFlags.Public | BindingFlags.Static);
-                        harmony.Patch(m, new HarmonyMethod(prefix));
-                        patched++;
-                        all.Append("  <- patched (segment id at position ").Append(index).Append(')');
+                        all = assemblies[a].GetTypes();
                     }
-                    catch (Exception ex)
+                    catch (ReflectionTypeLoadException ex)
                     {
-                        Debug.LogWarning("[QuayTools] Pedestrian block: could not patch " + m.Name + ": " + ex.Message);
+                        all = ex.Types;
+                    }
+                    catch (Exception)
+                    {
+                        continue;
+                    }
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        Type t = all[i];
+                        if (t != null && t != baseType && baseType.IsAssignableFrom(t)) types.Add(t);
                     }
                 }
 
-                Debug.Log("[QuayTools] Pedestrian block: patched " + patched + " PathFind method(s). ProcessItem* methods of this game version:" + all);
+                Dictionary<Type, Func<object, int>> getters = new Dictionary<Type, Func<object, int>>(_getters);
+                System.Text.StringBuilder all2 = new System.Text.StringBuilder();
+                int patched = 0;
+                for (int ti = 0; ti < types.Count; ti++)
+                {
+                    Type type = types[ti];
+                    Func<object, int> getter = null;
+                    if (!getters.TryGetValue(type, out getter)) getter = MakeGetter(type);
+                    getters[type] = getter;
+
+                    all2.Append("\n ").Append(type.FullName).Append(getter != null ? string.Empty : "  (no lane-types field: skipped)");
+                    if (getter == null) continue;
+
+                    MethodInfo[] methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                    for (int i = 0; i < methods.Length; i++)
+                    {
+                        MethodInfo m = methods[i];
+                        if (!m.Name.StartsWith("ProcessItem", StringComparison.Ordinal)) continue;
+                        if (m.IsAbstract || m.GetMethodBody() == null) continue;
+
+                        ParameterInfo[] ps = m.GetParameters();
+                        int index = -1;
+                        all2.Append("\n  ").Append(m.ReturnType.Name).Append(' ').Append(m.Name).Append('(');
+                        for (int k = 0; k < ps.Length; k++)
+                        {
+                            all2.Append(k > 0 ? ", " : string.Empty).Append(ps[k].ParameterType.Name).Append(' ').Append(ps[k].Name);
+                            if (index < 0 && ps[k].ParameterType == typeof(ushort) && ps[k].Name.IndexOf("segment", StringComparison.OrdinalIgnoreCase) >= 0) index = k;
+                        }
+                        all2.Append(')');
+
+                        bool isBool = m.ReturnType == typeof(bool);
+                        if (index < 0 || index > 9 || (m.ReturnType != typeof(void) && !isBool)) continue;
+                        if (Patched.Contains(m))
+                        {
+                            all2.Append("  <- already patched");
+                            continue;
+                        }
+
+                        try
+                        {
+                            MethodInfo prefix = typeof(PedestrianPathPatch).GetMethod((isBool ? "B" : "P") + index, BindingFlags.Public | BindingFlags.Static);
+                            harmony.Patch(m, new HarmonyMethod(prefix));
+                            Patched.Add(m);
+                            patched++;
+                            all2.Append("  <- patched (segment id at position ").Append(index).Append(')');
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning("[QuayTools] Pedestrian block: could not patch " + type.Name + "." + m.Name + ": " + ex.Message);
+                        }
+                    }
+                }
+                _getters = getters;
+
+                Debug.Log("[QuayTools] Pedestrian block: patched " + patched + " new method(s) in " + types.Count + " path-finder class(es):" + all2);
             }
             catch (Exception ex)
             {

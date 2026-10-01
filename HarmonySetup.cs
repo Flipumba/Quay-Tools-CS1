@@ -51,8 +51,25 @@ namespace QuayTools
             }
         }
 
+        /// <summary>Once more when a level has loaded: path-finder classes of other mods (TM:PE) may not have existed when the mod was enabled.</summary>
+        public static void ApplyLate()
+        {
+            try
+            {
+                HarmonyHelper.DoOnHarmonyReady(delegate ()
+                {
+                    PedestrianPathPatch.Apply(new Harmony(HarmonyId));
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[QuayTools] Late Harmony setup failed: " + ex);
+            }
+        }
+
         public static void Revert()
         {
+            PedestrianPathPatch.Reset();
             try
             {
                 if (!HarmonyHelper.IsHarmonyInstalled) return;
