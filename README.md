@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.5.6**
+**Version: v0.5.7**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -67,7 +67,7 @@ Draws network models (fences, walls, ...) along quay segments. Any number of lin
 1. Select the **Network-line** tool. Select quay segments (orange; **Shift**: whole connected quay; **right click** clears the selection).
 2. Press **+ Add network model**. A line is added to every selected segment, **in the middle of the quay**; use **< >** to switch between the lines of the selection (the line being edited is drawn as a blue stripe).
 3. The window has two columns. Left column: the selection and line switch, **Add network model**, the **Network model** drop-down list (preview and name, search field, scrolling, **star** = favourite: favourites are listed first and are kept in the mod settings for all savegames), **Turn the model around**, **Close line at segment start / end**, **Remove this line** / **Remove all lines**, then **Undo / Redo / Reset**. Right column (the values; slider, or type a value in the field next to it, double-click a slider to reset it):
-   - **Line start offset** / **Line end offset** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve). The offset moves the start or the end of the line back toward the segment, up to the border of the node and further, without joining it to the neighbouring segment.
+   - **Line start** / **Line end** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve). The offset moves the start or the end of the line back toward the segment, up to the border of the node and further, without joining it to the neighbouring segment.
    - **Offset Y** (+ toward the water, ±50 m) and **Offset Z** (±50 m).
    - **Model width** (10–500 %). The height of a model cannot be scaled (the game's net shader takes it from the model).
    - **Turn the model around**: the model faces the water by default; with this switch it faces the land. This is a real half turn (the front becomes the back), not a mirror image.
@@ -86,12 +86,12 @@ Places props along quay segments at a fixed step (lamps, trees, benches, bollard
 2. Press **+ Add prop line**. A line is added to every selected segment; use **< >** to switch between the lines of the selection.
 3. Left column: **Prop** drop-down list (trees are marked `[tree]`; search field and favourites inside the list), **Remove this line** / **Remove all lines**, **Undo / Redo / Reset**. Right column (values), in this order:
    - **Prop step** (0.5–50 m), **Prop scale** (5–1000 %), **Random scale**.
-   - **Prop rotation** and **Random rotation** (both hidden for trees: a tree has no direction).
+   - **Prop rotation**, **Random rotation** and **Follow the slope** (all hidden for trees: a tree has no direction). *Follow the slope* tilts the prop up and down with the height curve of the quay instead of standing level.
    - **Offset X** (along the line), **Offset Y** (+ toward the water) and **Offset Z** (±50 m).
    - **Line start** / **Line end** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve), so props also stand on the nodes. The props are counted from the start of the line; trimming one end only removes props and never moves the others.
 4. **Remove this line** / **Remove all lines** delete lines from the selected segments.
 
-Changes apply to the same line number on all selected segments. The lines follow the curves and heights of the quay like decal paths do. Where only one of two neighbouring segments has a line, only its half of the node is covered. Trees are drawn through the game's tree renderer (no rotation). Props-line data is saved in the savegame (`QuayTools.PropLines`). If a prop asset is missing when a save is loaded, that line is not drawn (a line in the log says so).
+Changes apply to the same line number on all selected segments. The lines follow the curves and heights of the quay like decal paths do. Where only one of two neighbouring segments has a line, only its half of the node is covered. Trees are drawn through the game's tree renderer (no rotation). Props that have lights (lamps) or day/night illumination are drawn through the game's own prop rendering, so their lights work. Props-line data is saved in the savegame (`QuayTools.PropLines`). If a prop asset is missing when a save is loaded, that line is not drawn (a line in the log says so).
 
 ### Texture-path
 
@@ -102,7 +102,7 @@ Lays a ground decal (any decal prop you have: Workshop decals, cobblestones, mar
    - **Decal**: game decals placed step by step along the path (like the game places decal props), with a projection box.
    - **Plane**: one textured strip cropped by the path edges, instead of placed decals. It lies lower than the quay surface by default (**Offset Z** 1 m), receives shadows when its tint is fully opaque, and is drawn unlit when the tint is translucent. The projection size is not shown for a plane.
 3. Left column: **Texture** drop-down list (decal paths always use a decal texture; a plane can also use the first entry, *Colour (no texture)*, which is the game's **theme pavement** texture tinted by the path colour), **Remove this path** / **Remove all paths**, **Undo / Redo / Reset**.
-4. Right column (values), in this order: **Path width** (0.1–50 m), **Texture scale** (width of one tile; choosing a decal sets its natural size, *Colour* sets the size of the theme pavement texture), **Texture step**, **Projection size** (decal only), **Offset X** (along the line; props, textures and tiles slide, the ends stay), **Offset Y** (+ toward the water), **Offset Z** (±50 m), **Line start** / **Line end** (0 to −50 m: the path is shortened at that end, like the lines of the other tools) the **tint** (R, G, B, A sliders or a hex value `#RRGGBB` / `#RRGGBBAA`) and **Colour multiply** (0–1: 0 = tint only where the decal allows it, 1 = texture fully multiplied by the tint, e.g. white or dark).
+4. Right column (values), in this order: **Path width** (0.1–50 m), **Texture scale** (width of one tile; choosing a decal sets its natural size, *Colour* sets the size of the theme pavement texture), **Texture step**, **Projection size** (decal only), **Offset X** (along the line; props, textures and tiles slide, the ends stay), **Offset Y** (+ toward the water), **Offset Z** (±50 m), **Line start** / **Line end** (0 to −50 m: the path is shortened at that end, like the lines of the other tools), the **tint** (R, G, B, A sliders or a hex value `#RRGGBB` / `#RRGGBBAA`) and **Colour multiply** (0–1: 0 = tint only where the decal allows it, 1 = the colour covers the whole texture, so white or any colour can be painted; works for decals and planes).
 5. A plane draws the composed texture of the decal prop (colours from its diffuse map, opacity from its ACI map).
 
 Changes apply to the same path number on all selected segments. The path is built from the two edge curves of the segment, so it follows the curves and heights of the quay, also after node edits made with Node Controller Renewal. Saves of v0.4.x keep their path (the old global rendering option becomes the way of drawing of each path).
@@ -114,7 +114,7 @@ Notes:
 
 ### Window
 
-The window has three columns: the tools, the controls of the tool (with the undo / redo / reset bar, the **Hide highlight while dragging** switch and the description of the tool) and the sliders. A tool without values shows its description on top. With the switch on, the highlight of the quay borders and lines is hidden only while a slider is dragged.
+The window opens with the tool column only. Choosing a tool opens the columns it needs: the controls of the tool with the undo / redo / reset bar and the status line, and, for Network-line, Props-line and Texture-path, a third column with the sliders and the **Hide highlight while dragging** switch. Invert shows a second column only while it has a message. The description of a tool is shown when the mouse is over its button. With the switch on, the highlight of the quay borders and lines is hidden only while a slider is dragged.
 
 ### Edited segment markers
 
@@ -215,6 +215,21 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
 ## Changelog
+
+### v0.5.7
+- The **What's new** window now lists the changes from v0.5.6 (English and Russian); the options button shows all of them.
+- New **What's new** window: after a new version is run for the first time, a short list of changes is shown once when a map is loaded (not on a first installation). The last seen version is kept in the mod settings.
+- Colour multiply (Texture-path) rebuilt: the colour mask of the game's decal shader works the other way round from what v0.5.6 assumed (the slider removed the colour instead of adding it). Now 0 is the old behaviour and 1 lets the colour cover the whole texture, so a texture can be painted white. It also works for planes (the slider was disabled for them).
+- Fixed: after flipping a segment with **Invert segment**, Line start / Line end (and Offset X) of its lines worked on the opposite end compared with a neighbouring segment. They are now given along a direction that depends on the water side (with the water on the right of start → end it is start → end, otherwise end → start), so the same value moves every segment of a quay the same way. Saved values of flipped segments now act on the other end than before.
+- Window: the description of a tool is now the tooltip of its button instead of a block in the second column. Empty columns are closed: the window opens with the tool column only, choosing a tool opens one or two more columns (Invert opens one only while it shows a message). The tool is chosen by a click: nothing is highlighted or flipped until then.
+- Props-line: props with lights (street lamps) now have their light sources and night illumination: they are drawn through the game's own prop rendering. If that is not available, they are drawn without lights as before.
+- Props-line: new **Follow the slope** switch: the prop tilts with the height curve of the quay.
+- Props-line / Texture-path: the tile grid and the props start at the canonical start of the segment (water on the right), the way "Line start / end" and "Offset X" already worked. Before, they were counted from the physical start, so a flipped segment did not continue its neighbour: props faced the other way, doubled or left gaps at the node, and texture tiles did not line up. A prop that falls exactly on the end of a segment is no longer placed twice at a node.
+- The floating tool icons above edited segments are no longer drawn over the tool window.
+- Window: the block with the delete buttons and Undo / Redo / Reset is always at the very bottom of the window.
+- Window: the lower edge of the Undo / Redo / Reset block is level with the lower edge of the "Hide highlight" switch; the message about undone actions is above the block.
+- Props-line: a prop with a LOD (distant model) now turns with the main model; before only the near model was turned (the angle is passed the way the game does it).
+- Window: the title is on two lines when only the tool column is shown; the "Hide highlight while dragging" switch is created on top of the panels again.
 
 ### v0.5.6
 - Interface language: the window was only half translated when the game language was English, because its texts were created once. The window is now built again when the language changes, and all texts have both languages.

@@ -256,8 +256,8 @@ namespace QuayTools
             if (good) PropLineRenderer.ExtendToNodeCentres(id, c, tmp, lift, waterRight, path);
 
             float len = path.Length;
-            float d0 = Mathf.Max(0f, -line.StartShift) * FenceStore.Unit;
-            float d1 = len - Mathf.Max(0f, -line.EndShift) * FenceStore.Unit;
+            float d0 = Mathf.Max(0f, -DecalRenderer.TrimStartValue(line.StartShift, line.EndShift, waterRight)) * FenceStore.Unit;
+            float d1 = len - Mathf.Max(0f, -DecalRenderer.TrimEndValue(line.StartShift, line.EndShift, waterRight)) * FenceStore.Unit;
             if (d1 - d0 < 0.3f)
             {
                 float mid = Mathf.Clamp((d0 + d1) * 0.5f, 0.15f, Mathf.Max(len - 0.15f, 0.15f));

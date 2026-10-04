@@ -24,6 +24,8 @@ namespace QuayTools
             public Matrix4x4[] Matrices; // props
             public Vector3[] Positions;
             public float[] Scales;       // trees
+            public Quaternion[] Rotations;
+            public bool Lit;             // the prop has effects (lights) or illumination: drawn through the game's own prop rendering
             public float ViewDistance;
         }
 
@@ -187,7 +189,7 @@ namespace QuayTools
                     DecalRenderer.Path path = DecalRenderer.SamplePath(P);
                     if (good) ExtendToNodeCentres(id, c, tmp, lift, waterRight, path);
 
-                    Built built = Place(id, k, e, info, tree, path);
+                    Built built = Place(id, k, e, info, tree, path, waterRight);
                     if (built != null)
                     {
                         item.Built.Add(built);
@@ -255,9 +257,14 @@ namespace QuayTools
         /// Positions are the grid d = k * step counted from the start of the line (the middle of the start node), so
         /// trimming one end never moves the props at the other end. The trim only removes props.
         /// </summary>
-        private static Built Place(ushort id, int index, PropEntry e, PropInfo info, TreeInfo tree, DecalRenderer.Path path)
+        private static Built Place(ushort id, int index, PropEntry e, PropInfo info, TreeInfo tree, DecalRenderer.Path path, bool waterRight)
         {
             float len = path.Length;
+
+            // The line is walked in the canonical direction (the water on its right), whatever way the segment was built or
+            // flipped: the grid starts at the canonical start, so the props of neighbouring segments continue each other, face
+            // the same way and the trim / slide act on the same ends everywhere.
+            bool flip = !waterRight;
             float trimS = Mathf.Max(0f, -e.StartShift) * FenceStore.Unit;
             float trimE = Mathf.Max(0f, -e.EndShift) * FenceStore.Unit;
             float lo = trimS - 0.001f, hi = len - trimE + 0.001f;
@@ -273,23 +280,31 @@ namespace QuayTools
 
             float shiftMod = Mathf.Repeat(e.ShiftX * FenceStore.Unit, step); // the grid slides along the line, the ends stay
 
+            // a prop exactly at the end of the line is the first prop of the next segment (the node middle): not placed twice
+            NetSegment seg = NetManager.instance.m_segments.m_buffer[id];
+            bool dropEnd = JoinsTwo(flip ? seg.m_startNode : seg.m_endNode);
+
             List<Vector3> positions = new List<Vector3>();
             List<Matrix4x4> matrices = new List<Matrix4x4>();
             List<float> scales = new List<float>();
+            List<Quaternion> rotations = new List<Quaternion>();
 
             System.Random rnd = new System.Random(unchecked(id * 7919 + index * 104729 + 17));
             path.ResetCursor();
             for (int i = 0; i <= last; i++)
             {
                 double r1 = rnd.NextDouble(), r2 = rnd.NextDouble(); // drawn for every grid position, kept or not
-                float d = i * step + shiftMod;
-                if (d < lo || d > hi) continue;
+                float dc = i * step + shiftMod;   // distance along the canonical direction
+                if (dc < lo || dc > hi) continue;
+                if (dropEnd && dc > len - 0.02f) continue;
+                float d = flip ? len - dc : dc;   // the same place measured along the path of the segment
 
                 Vector3 pos, left;
                 path.Eval(Mathf.Clamp(d, 0f, len), out pos, out left);
 
                 Vector3 fwd = Vector3.Cross(Vector3.up, left);
                 if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
+                if (flip) fwd = -fwd;             // canonical forward
 
                 float yaw = e.Angle + (e.RandomRotation ? (float)(r1 * 360.0) : 0f);
                 float scale = e.Scale / 100f * (1f + (float)(r2 * 2.0 - 1.0) * e.ScaleRandom / 100f);
@@ -299,7 +314,19 @@ namespace QuayTools
                 scales.Add(scale);
                 if (info != null)
                 {
-                    Quaternion rot = Quaternion.LookRotation(fwd, Vector3.up) * Quaternion.Euler(0f, yaw, 0f);
+                    Quaternion basis = Quaternion.LookRotation(fwd, Vector3.up);
+                    if (e.Tilt)
+                    {
+                        // follow the height curve: the prop looks along the 3D tangent of the line
+                        Vector3 pa, pb, la, lb;
+                        path.Eval(Mathf.Clamp(d - 0.5f, 0f, len), out pa, out la);
+                        path.Eval(Mathf.Clamp(d + 0.5f, 0f, len), out pb, out lb);
+                        Vector3 tan = pb - pa;
+                        if (flip) tan = -tan;
+                        if (tan.sqrMagnitude > 1e-6f && (fwd.x * tan.x + fwd.z * tan.z) > 0f) basis = Quaternion.LookRotation(tan.normalized, Vector3.up);
+                    }
+                    Quaternion rot = basis * Quaternion.Euler(0f, yaw, 0f);
+                    rotations.Add(rot);
                     matrices.Add(Matrix4x4.TRS(pos, rot, new Vector3(scale, scale, scale)));
                 }
             }
@@ -311,8 +338,96 @@ namespace QuayTools
             built.Positions = positions.ToArray();
             built.Scales = scales.ToArray();
             built.Matrices = matrices.ToArray();
+            built.Rotations = rotations.ToArray();
+            built.Lit = info != null && (info.m_hasEffects || info.m_alwaysActive || info.m_illuminationBlinkType != 0 || info.m_illuminationOffRange.x < 1000f);
             built.ViewDistance = info != null && info.m_maxRenderDistance > 1f ? info.m_maxRenderDistance : DefaultViewDistance;
             return built;
+        }
+
+        // ---------- props with lights: the game's own prop rendering ----------
+
+        // PropInstance.RenderInstance(cameraInfo, info, id, position, rotation, scale, angle, color, objectIndex, active, billboard):
+        // draws the prop (with its LOD and day/night illumination) and renders its effects, i.e. the lights of lamps.
+        private static System.Reflection.MethodInfo _gameRender;
+        private static bool _gameRenderSearched;
+        private static bool _gameRenderFailed;
+        private static readonly object[] GameArgs = new object[11];
+        private static object _gameId;
+
+        private static bool GameRenderAvailable
+        {
+            get
+            {
+                if (_gameRenderFailed) return false;
+                if (!_gameRenderSearched)
+                {
+                    _gameRenderSearched = true;
+                    try
+                    {
+                        System.Reflection.MethodInfo[] all = typeof(PropInstance).GetMethods(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                        for (int i = 0; i < all.Length && _gameRender == null; i++)
+                        {
+                            if (all[i].Name != "RenderInstance") continue;
+                            System.Reflection.ParameterInfo[] ps = all[i].GetParameters();
+                            if (ps.Length == 11 && ps[0].ParameterType == typeof(RenderManager.CameraInfo) && ps[1].ParameterType == typeof(PropInfo) &&
+                                ps[3].ParameterType == typeof(Vector3) && ps[4].ParameterType == typeof(Quaternion) && ps[5].ParameterType == typeof(float) &&
+                                ps[7].ParameterType == typeof(Color) && ps[8].ParameterType == typeof(Vector4) && ps[9].ParameterType == typeof(bool))
+                                _gameRender = all[i];
+                        }
+                        _gameId = new InstanceID();
+                        Debug.Log("[QuayTools] Prop lines: lights of props " + (_gameRender != null ? "use PropInstance.RenderInstance" : "are unavailable (PropInstance.RenderInstance not found)"));
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Debug.LogWarning("[QuayTools] Prop lines: lights unavailable: " + ex.Message);
+                    }
+                }
+                return _gameRender != null;
+            }
+        }
+
+        private void RenderLit(RenderManager.CameraInfo cameraInfo)
+        {
+            if (!GameRenderAvailable) return;
+            Vector3 camPos = cameraInfo.m_position;
+            for (int i = 0; i < _ids.Count; i++)
+            {
+                Item item;
+                if (!_items.TryGetValue(_ids[i], out item)) continue;
+                for (int b = 0; b < item.Built.Count; b++)
+                {
+                    Built built = item.Built[b];
+                    if (!built.Lit || built.Tree != null || built.Info == null) continue;
+                    PropInfo info = built.Info;
+                    float maxSqr = built.ViewDistance * built.ViewDistance;
+                    for (int k = 0; k < built.Matrices.Length; k++)
+                    {
+                        if ((built.Positions[k] - camPos).sqrMagnitude > maxSqr) continue;
+                        try
+                        {
+                            GameArgs[0] = cameraInfo;
+                            GameArgs[1] = info;
+                            GameArgs[2] = _gameId;
+                            GameArgs[3] = built.Positions[k];
+                            GameArgs[4] = built.Rotations[k];
+                            GameArgs[5] = built.Scales[k];
+                            // the angle (radians, the game's sign: a turn about the down axis) is what the LOD batch uses; the quaternion only turns the full mesh
+                            GameArgs[6] = -built.Rotations[k].eulerAngles.y * Mathf.Deg2Rad; // the game turns a prop by AngleAxis(angle, Vector3.down)
+                            GameArgs[7] = info.m_color0;
+                            GameArgs[8] = RenderManager.DefaultColorLocation;
+                            GameArgs[9] = true;
+                            GameArgs[10] = Vector4.zero;
+                            _gameRender.Invoke(null, GameArgs);
+                        }
+                        catch (System.Exception ex)
+                        {
+                            _gameRenderFailed = true; // the plain drawing takes over
+                            Debug.LogWarning("[QuayTools] Prop lines: lights failed, drawing without them: " + ex.Message);
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         // ---------- trees ----------
@@ -321,6 +436,7 @@ namespace QuayTools
         internal void RenderTrees(RenderManager.CameraInfo cameraInfo)
         {
             if (cameraInfo == null) return;
+            RenderLit(cameraInfo);
             float maxSqr = DefaultViewDistance * 2f;
             maxSqr *= maxSqr;
 
@@ -359,6 +475,7 @@ namespace QuayTools
                     PropInfo info = built.Info;
                     if (built.Tree != null) continue;
                     if (info == null || info.m_mesh == null || info.m_material == null) continue;
+                    if (built.Lit && GameRenderAvailable) continue; // drawn by the game's own rendering with its lights
 
                     _block.Clear();
                     _block.SetColor(pm.ID_Color, info.m_color0);

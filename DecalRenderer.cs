@@ -79,6 +79,7 @@ namespace QuayTools
         private readonly Dictionary<PropInfo, Texture2D> _composite = new Dictionary<PropInfo, Texture2D>();
         private readonly Dictionary<long, Material> _mulMats = new Dictionary<long, Material>();
         private readonly Dictionary<long, Texture2D> _mulTex = new Dictionary<long, Texture2D>();
+        private readonly HashSet<long> _mulFailed = new HashSet<long>(); // colour multiply that could not be built (the original is used)
         private readonly HashSet<PropInfo> _compositeFailed = new HashSet<PropInfo>();
         private Texture2D _pavement;           // the game's theme pavement texture (base of a path without a decal)
         private bool _pavementSearched;
@@ -91,6 +92,7 @@ namespace QuayTools
         private int _cursor;
         private int _diagnostics;
         private int _gapLogs;
+        private int _geoLogs;
 
         internal static DecalRenderer Instance;
 
@@ -271,6 +273,13 @@ namespace QuayTools
         }
 
         /// <summary>Bezier control points of the path centre line from the four real corners of the segment.</summary>
+        // "Line start" / "Line end" / "Offset X" are given along a canonical direction that does not depend on how the segment was
+        // built: with the water on the right of start->end it is start->end, otherwise it is end->start. So neighbouring
+        // segments, one of them inverted, trim and slide in the same direction.
+        internal static float TrimStartValue(float start, float end, bool waterRight) { return waterRight ? start : end; }
+        internal static float TrimEndValue(float start, float end, bool waterRight) { return waterRight ? end : start; }
+        internal static float ShiftXValue(float x, bool waterRight) { return waterRight ? x : -x; }
+
         internal static bool CornerControlPoints(Corners c, DecalSettings s, float lift, bool waterRight, Vector3[] P)
         {
             Vector3 mL1, mL2, mR1, mR2;
@@ -724,8 +733,20 @@ namespace QuayTools
                     ExtendCurve(path, Qs, Qe);
                 }
 
+                // The line is walked in the canonical direction (the water on its right), whatever way the segment was built or
+                // flipped: the tile grid starts at the canonical start, so neighbouring segments continue each other, and the
+                // trim ("Line start / end") and the slide ("Offset X") act on the same ends everywhere.
+                if (!waterRight) path = ReversePath(path);
+
                 // start / end trim (the path is shortened like the lines of the other tools)
                 path = TrimPath(path, Mathf.Max(0f, -item.Settings.StartShift) * FenceStore.Unit, path.Length - Mathf.Max(0f, -item.Settings.EndShift) * FenceStore.Unit);
+
+                if (_geoLogs < 60 && ok)
+                {
+                    _geoLogs++;
+                    Debug.Log("[QuayTools] Decal path " + id + "#" + item.Index + ": waterRight " + waterRight + ", length " + path.Length.ToString("0.0") + " m, start " + item.Settings.StartShift +
+                        ", end " + item.Settings.EndShift + ", shiftX " + item.Settings.ShiftX + ", bridge " + item.BridgeStart + "/" + item.BridgeEnd);
+                }
 
                 float width = Mathf.Clamp(item.Settings.Width, DecalStore.MinWidth, DecalStore.MaxWidth) * FenceStore.Unit;
 
@@ -840,6 +861,34 @@ namespace QuayTools
                 if (left.sqrMagnitude > 1e-8f) left.Normalize();
                 else left = Left[_cursor];
             }
+        }
+
+        /// <summary>The same path walked in the opposite direction (start and end swap, left becomes right).</summary>
+        internal static Path ReversePath(Path src)
+        {
+            int n = src.Pos.Length;
+            Path r = new Path();
+            r.Pos = new Vector3[n];
+            r.Left = new Vector3[n];
+            r.Dist = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                int j = n - 1 - i;
+                r.Pos[i] = src.Pos[j];
+                r.Left[i] = -src.Left[j];
+                r.Dist[i] = Mathf.Max(0f, src.Length - src.Dist[j]);
+            }
+            r.Length = src.Length;
+            for (int i = src.Cubics.Count - 1; i >= 0; i--)
+            {
+                Vector3[] c = src.Cubics[i];
+                r.Cubics.Add(new Vector3[] { c[3], c[2], c[1], c[0] });
+                r.CubicFrom.Add(src.Length - src.CubicTo[i]);
+                r.CubicTo.Add(src.Length - src.CubicFrom[i]);
+            }
+            r.BridgeStartLen = src.BridgeEndFrom < float.MaxValue * 0.5f ? Mathf.Max(0f, src.Length - src.BridgeEndFrom) : -1f;
+            r.BridgeEndFrom = src.BridgeStartLen >= 0f ? src.Length - src.BridgeStartLen : float.MaxValue;
+            return r;
         }
 
         /// <summary>The part [d0, d1] of a path (distances from its start).</summary>
@@ -1103,6 +1152,7 @@ namespace QuayTools
             {
                 float centreD = (r + 0.5f) * spacing + off;
                 if (centreD + tileL * 0.5f < 0.01f || centreD - tileL * 0.5f > len - 0.01f) continue;
+
                 Vector3 pos, left;
                 path.Eval(Mathf.Clamp(centreD, 0f, len), out pos, out left);
                 Vector3 fwd = Vector3.Cross(Vector3.up, left);
@@ -1121,8 +1171,16 @@ namespace QuayTools
                     tiles.Add(Matrix4x4.TRS(p, rot, scale) * centre);
                 }
             }
+            if (_tileLogs < 60)
+            {
+                _tileLogs++;
+                Debug.Log("[QuayTools] Decal tiles: path length " + len.ToString("0.0") + ", cols " + cols + ", rows " + rows + ", spacing " + spacing.ToString("0.00") + ", tile length " + tileL.ToString("0.00") +
+                    ", slide " + off.ToString("0.00") + ", bridge " + path.BridgeStartLen.ToString("0.0") + "/" + (path.BridgeEndFrom > len ? "-" : path.BridgeEndFrom.ToString("0.0")) + ", tiles " + tiles.Count);
+            }
             return tiles;
         }
+
+        private static int _tileLogs;
 
         // ---------- drawing ----------
 
@@ -1173,6 +1231,11 @@ namespace QuayTools
                     if (simple == null) continue;
                     _block.Clear();
                     _block.SetColor("_Color", tint);
+                    if (item.Settings.ColorMul > 0)
+                    {
+                        Texture2D baseTex = GetCompositeTexture(info);
+                        if (baseTex != null) _block.SetTexture("_MainTex", GetWhitened(baseTex, item.Settings.ColorMul));
+                    }
                     Graphics.DrawMesh(item.Mesh, Matrix4x4.identity, simple, 0, null, 0, _block, false, receive); // never casts shadows
                 }
                 else
@@ -1185,6 +1248,7 @@ namespace QuayTools
                         {
                             _block.Clear();
                             _block.SetColor("_Color", tint);
+                            if (item.Settings.ColorMul > 0) _block.SetTexture("_MainTex", GetWhitened(GetPavementTexture(), item.Settings.ColorMul));
                             Graphics.DrawMesh(item.Mesh, Matrix4x4.identity, pav, 0, null, 0, _block, false, receive);
                             continue;
                         }
@@ -1349,9 +1413,11 @@ namespace QuayTools
         }
 
         /// <summary>
-        /// The game applies the tint of a decal only where the colour channel (G) of its ACI map allows it. For "colour
-        /// multiply" the material of the decal is copied with an ACI map whose colour channel is raised toward 255
-        /// (step 10 = everywhere), so the texture is multiplied by the colour over the whole decal. Step 0 = the original material.
+        /// "Colour multiply" for placed decals. The colour channel (G) of the ACI map of a decal says where the game applies
+        /// the tint (dark = the tint is applied, bright = the original texture colour stays). The material is copied with
+        /// an ACI map whose G channel is lowered toward 0 by the step, and with the diffuse texture blended toward white by the
+        /// same amount, so at the top step the whole decal has exactly the tint colour (white tint = a white decal), and in
+        /// between the tint covers the texture gradually. Step 0 = the original material.
         /// </summary>
         private Material GetColorMulMaterial(PropInfo info, int step)
         {
@@ -1360,40 +1426,104 @@ namespace QuayTools
             step = Mathf.Min(step, 10);
 
             long key = (long)info.GetInstanceID() * 16L + step;
+            if (_mulFailed.Contains(key)) return src;
             Material m;
             if (_mulMats.TryGetValue(key, out m) && m != null) return m;
 
             try
             {
-                Texture aci = src.HasProperty("_ACIMap") ? src.GetTexture("_ACIMap") : null;
-                if (aci == null) return src; // no map: the game applies the colour everywhere already
-
-                int w = Mathf.Clamp(aci.width, 4, 512);
-                int h = Mathf.Clamp(aci.height, 4, 512);
-                Texture2D ta = ReadBack(aci, w, h);
-                Color32[] px = ta.GetPixels32();
-                Destroy(ta);
-
                 float k = step / 10f;
-                for (int i = 0; i < px.Length; i++) px[i].g = (byte)Mathf.Clamp(Mathf.RoundToInt(px[i].g + (255 - px[i].g) * k), 0, 255);
-
-                Texture2D t = new Texture2D(w, h, TextureFormat.RGBA32, true);
-                t.name = "QuayTools colour mask " + info.name + " " + step;
-                t.SetPixels32(px);
-                t.Apply(true);
-                t.wrapMode = aci.wrapMode;
-                t.filterMode = FilterMode.Bilinear;
-
                 m = new Material(src);
-                m.SetTexture("_ACIMap", t);
-                _mulTex[key] = t;
+
+                Texture aci = src.HasProperty("_ACIMap") ? src.GetTexture("_ACIMap") : null;
+                if (aci != null)
+                {
+                    int w = Mathf.Clamp(aci.width, 4, 512);
+                    int h = Mathf.Clamp(aci.height, 4, 512);
+                    Texture2D ta = ReadBack(aci, w, h);
+                    Color32[] px = ta.GetPixels32();
+                    Destroy(ta);
+                    for (int i = 0; i < px.Length; i++) px[i].g = (byte)Mathf.Clamp(Mathf.RoundToInt(px[i].g * (1f - k)), 0, 255);
+
+                    Texture2D t = new Texture2D(w, h, TextureFormat.RGBA32, true);
+                    t.name = "QuayTools colour mask " + info.name + " " + step;
+                    t.SetPixels32(px);
+                    t.Apply(true);
+                    t.wrapMode = aci.wrapMode;
+                    t.filterMode = FilterMode.Bilinear;
+                    m.SetTexture("_ACIMap", t);
+                    _mulTex[key] = t;
+                }
+
+                Texture main = src.mainTexture;
+                if (main != null)
+                {
+                    int w = Mathf.Clamp(main.width, 4, 1024);
+                    int h = Mathf.Clamp(main.height, 4, 1024);
+                    Texture2D tm = ReadBack(main, w, h);
+                    Color32[] px = tm.GetPixels32();
+                    Destroy(tm);
+                    Whiten(px, k);
+                    Texture2D t = new Texture2D(w, h, TextureFormat.RGBA32, true);
+                    t.name = "QuayTools colour base " + info.name + " " + step;
+                    t.SetPixels32(px);
+                    t.Apply(true);
+                    t.wrapMode = main.wrapMode;
+                    t.filterMode = FilterMode.Bilinear;
+                    t.anisoLevel = 4;
+                    m.mainTexture = t;
+                    _mulTex[key + 0x40000000L] = t;
+                }
+
                 _mulMats[key] = m;
                 return m;
             }
             catch (System.Exception ex)
             {
                 Debug.LogWarning("[QuayTools] Colour multiply is not available for " + info.name + ": " + ex.Message);
-                _mulMats[key] = src;
+                if (m != null) Destroy(m);
+                _mulFailed.Add(key);
+                return src;
+            }
+        }
+
+        private static void Whiten(Color32[] px, float k)
+        {
+            for (int i = 0; i < px.Length; i++)
+            {
+                px[i].r = (byte)Mathf.RoundToInt(px[i].r + (255 - px[i].r) * k);
+                px[i].g = (byte)Mathf.RoundToInt(px[i].g + (255 - px[i].g) * k);
+                px[i].b = (byte)Mathf.RoundToInt(px[i].b + (255 - px[i].b) * k);
+            }
+        }
+
+        /// <summary>A copy of a readable texture blended toward white (for planes with "colour multiply"); step 0 = the source.</summary>
+        private Texture2D GetWhitened(Texture2D src, int step)
+        {
+            if (src == null || step <= 0) return src;
+            step = Mathf.Min(step, 10);
+            long key = (long)src.GetInstanceID() * 16L + step + 0x20000000L;
+            if (_mulFailed.Contains(key)) return src;
+            Texture2D t;
+            if (_mulTex.TryGetValue(key, out t) && t != null) return t;
+            try
+            {
+                Color32[] px = src.GetPixels32();
+                Whiten(px, step / 10f);
+                t = new Texture2D(src.width, src.height, TextureFormat.RGBA32, true);
+                t.name = src.name + " white " + step;
+                t.SetPixels32(px);
+                t.Apply(true);
+                t.wrapMode = src.wrapMode;
+                t.filterMode = src.filterMode;
+                t.anisoLevel = 4;
+                _mulTex[key] = t;
+                return t;
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning("[QuayTools] Colour multiply (plane): " + ex.Message);
+                _mulFailed.Add(key);
                 return src;
             }
         }

@@ -81,8 +81,8 @@ namespace QuayTools
 
         private UIDragHandle _drag;
         private UIButton[] _modeButtons;
-        private UILabel _hint;
-        private UIPanel _toolsPanel, _descPanel;
+        private UILabel _title;
+        private UIPanel _toolsPanel;
         private Toggle _hideHl;
         internal static bool SliderDragging;
         private UILabel _status;
@@ -127,7 +127,7 @@ namespace QuayTools
         private UISlider _pShiftX, _pStep, _pStart, _pEnd, _pLateral, _pLift, _pAngle, _pScale, _pRand;
         private UITextField _pShiftXV, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV;
         private UITextField _pAngleV, _pScaleV, _pRandV;
-        private Toggle _pRotate;
+        private Toggle _pRotate, _pTilt;
         private UIPanel _propRot, _propRest;   // rotation controls (hidden for trees) and everything below them
         private float _propHeightFull, _propHeightTree;
         private int _propIndex;
@@ -199,7 +199,7 @@ namespace QuayTools
         public override void Awake()
         {
             base.Awake();
-            width = ToolsWidth + PanelWidth * 2f;
+            width = ToolsWidth;
             height = TopY + 600f;
             backgroundSprite = "MenuPanel2";
             isInteractive = true;
@@ -470,7 +470,7 @@ namespace QuayTools
             _drag.relativePosition = Vector3.zero;
             _drag.target = this;
 
-            MakeLabel(this, "Quay Tools", 12f, 9f, 1.0f);
+            _title = MakeLabel(this, "Quay Tools", 12f, 9f, 1.0f);
 
             int modeCount = QuayTool.ModeCount;
             _modeButtons = new UIButton[modeCount];
@@ -494,7 +494,7 @@ namespace QuayTools
                 button.relativePosition = new Vector3(5f, 6f + i * (btnH + 4f));
                 StyleButton(button);
                 button.isEnabled = QuayTool.IsImplemented(mode);
-                button.tooltip = button.isEnabled ? Loc.T(TitleKeys[i]) : Loc.T(TitleKeys[i]) + Loc.T("soon");
+                button.tooltip = button.isEnabled ? DescriptionFor((QuayTool.Mode)i) : Loc.T(TitleKeys[i]) + Loc.T("soon");
 
                 Texture2D icon = ModPaths.LoadIcon(IconFiles[i]);
                 if (icon != null)
@@ -520,26 +520,6 @@ namespace QuayTools
                 _modeButtons[i] = button;
             }
 
-            // second column: the description of the tool on a panel of its own (above the controls of a tool without values, below them otherwise)
-            _descPanel = AddUIComponent<UIPanel>();
-            _descPanel.width = PanelWidth - 12f;
-            _descPanel.height = 100f;
-            _descPanel.relativePosition = new Vector3(ToolsWidth + 6f, TopY);
-            _descPanel.backgroundSprite = "GenericPanel";
-            _descPanel.color = new Color32(18, 24, 30, 255);
-            _descPanel.isInteractive = false;
-
-            _hint = MakeLabel(_descPanel, string.Empty, 8f, 6f, 0.7f);
-            _hint.width = PanelWidth - 28f;
-            _hint.wordWrap = true;
-            _hint.autoSize = false;
-            _hint.height = 90f;
-
-            _hideHl = MakeToggle(this, ToolsWidth + 10f, TopY, PanelWidth - 20f, "hidehl", null,
-                delegate (bool v) { Settings.HideHighlightUi = v; });
-            _hideHl.Button.tooltip = Loc.T("hidehl_tip");
-            SetToggle(_hideHl, Settings.HideHighlightUi);
-
             _status = MakeLabel(this, string.Empty, ToolsWidth + 12f, TopY, 0.8f);
             _status.textColor = new Color32(120, 220, 140, 255);
             _status.width = PanelWidth - 24f;
@@ -555,6 +535,12 @@ namespace QuayTools
             BuildLockSection();
             BuildPropSection();
             BuildBar();
+
+            // created after the sections so that no panel lies over it
+            _hideHl = MakeToggle(this, ToolsWidth + 10f, TopY, PanelWidth - 20f, "hidehl", null,
+                delegate (bool v) { Settings.HideHighlightUi = v; });
+            _hideHl.Button.tooltip = Loc.T("hidehl_tip");
+            SetToggle(_hideHl, Settings.HideHighlightUi);
         }
 
         // ---------- network-model line section ----------
@@ -1192,25 +1178,48 @@ namespace QuayTools
 
         // ---------- refresh / layout ----------
 
-        /// <summary>Two columns (line modes) or one.</summary>
-        private void SetWide(bool wide)
+        /// <summary>Opens or closes the columns right of the tool column (0 = only the tools).</summary>
+        private void SetColumns(int columns)
         {
-            float target = ToolsWidth + (wide ? PanelWidth * 2f : PanelWidth);
-            if (Mathf.Approximately(width, target)) return;
-
-            if (wide)
+            float target = ToolsWidth + PanelWidth * columns;
+            if (!Mathf.Approximately(width, target))
             {
-                Vector2 res = UIView.GetAView().GetScreenResolution();
-                Vector3 p = absolutePosition;
-                if (p.x + target > res.x - 10f)
+                if (target > width)
                 {
-                    p.x = Mathf.Max(10f, res.x - target - 10f);
-                    absolutePosition = p;
+                    Vector2 res = UIView.GetAView().GetScreenResolution();
+                    Vector3 p = absolutePosition;
+                    if (p.x + target > res.x - 10f)
+                    {
+                        p.x = Mathf.Max(10f, res.x - target - 10f);
+                        absolutePosition = p;
+                    }
                 }
+                width = target;
+                if (_drag != null) _drag.width = target;
             }
 
-            width = target;
-            if (_drag != null) _drag.width = target;
+            // the title has to fit above the narrow tool column: two lines there, one line when the window is wider
+            if (_title != null)
+            {
+                if (columns == 0)
+                {
+                    _title.autoSize = false;
+                    _title.textAlignment = UIHorizontalAlignment.Center;
+                    _title.text = "Quay\nTools";
+                    _title.textScale = 0.8f;
+                    _title.width = ToolsWidth;
+                    _title.height = 40f;
+                    _title.relativePosition = new Vector3(0f, 6f);
+                }
+                else
+                {
+                    _title.text = "Quay Tools";
+                    _title.autoSize = true;
+                    _title.textAlignment = UIHorizontalAlignment.Left;
+                    _title.textScale = 1.0f;
+                    _title.relativePosition = new Vector3(12f, 9f);
+                }
+            }
         }
 
         public void Refresh()
@@ -1218,15 +1227,13 @@ namespace QuayTools
             if (!_built) return;
 
             QuayTool tool = QuayTool.Instance;
-            QuayTool.Mode current = tool != null ? tool.CurrentMode : QuayTool.Mode.Invert;
+            QuayTool.Mode current = tool != null ? tool.CurrentMode : QuayTool.Mode.None;
 
             for (int i = 0; i < _modeButtons.Length; i++)
             {
                 if (!_modeButtons[i].isEnabled) continue;
                 _modeButtons[i].state = (int)current == i ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
             }
-
-            _hint.text = DescriptionFor(current);
 
             bool addMode = current == QuayTool.Mode.AddNetwork;
             bool decalMode = current == QuayTool.Mode.Decal;
@@ -1239,21 +1246,10 @@ namespace QuayTools
             _prop.isVisible = propMode;
             _lock.isVisible = lockMode;
             _bar.isVisible = select;
-            SetWide(true);
             ClosePopup();
             if (select) LoadFromSelection();
             UpdateBar();
             UpdateHeight();
-        }
-
-        /// <summary>Height of a wrapped text (a rough estimate: the label does not know its height before it is drawn).</summary>
-        private static float TextHeight(string text, float width)
-        {
-            int perLine = Mathf.Max(10, Mathf.FloorToInt(width / 7.8f));
-            int lines = 0;
-            string[] parts = text.Split('\n');
-            for (int i = 0; i < parts.Length; i++) lines += Mathf.Max(1, Mathf.CeilToInt(parts[i].Length / (float)perLine));
-            return lines * 16f + 6f;
         }
 
         private static string DescriptionFor(QuayTool.Mode current)
@@ -1262,7 +1258,36 @@ namespace QuayTools
             if (current == QuayTool.Mode.Lock) description += "\n\n" + Loc.T("lock_note");
             else if (current == QuayTool.Mode.RemovePedestrian) description += "\n\n" + Loc.T("nop_note");
             else if (current == QuayTool.Mode.HideProps) description += "\n\n" + Loc.T("hp_note");
-            return description;
+            return WrapText(description, 64);
+        }
+
+        /// <summary>Breaks a text into lines of about the given width (the tooltip of the game does not wrap long lines).</summary>
+        private static string WrapText(string text, int width)
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            string[] paragraphs = text.Split('\n');
+            for (int p = 0; p < paragraphs.Length; p++)
+            {
+                if (p > 0) sb.Append('\n');
+                string[] words = paragraphs[p].Split(' ');
+                int len = 0;
+                for (int w = 0; w < words.Length; w++)
+                {
+                    if (len > 0 && len + 1 + words[w].Length > width)
+                    {
+                        sb.Append('\n');
+                        len = 0;
+                    }
+                    else if (len > 0)
+                    {
+                        sb.Append(' ');
+                        len++;
+                    }
+                    sb.Append(words[w]);
+                    len += words[w].Length;
+                }
+            }
+            return sb.ToString();
         }
 
         private static bool SelectMode(QuayTool.Mode m)
@@ -1286,42 +1311,43 @@ namespace QuayTools
             return m == QuayTool.Mode.AddNetwork ? _netHeight : m == QuayTool.Mode.Decal ? _decalHeightFull : m == QuayTool.Mode.PropLine ? _propHeightFull : _lockHeight;
         }
 
-        private const float BarGap = 2f, BarH = 38f, StatusH = 22f, DescGap = 8f;
+        private const float BarGap = 2f, BarH = 38f, StatusH = 22f;
 
-        /// <summary>One window size for all tools: the largest of what any tool needs.</summary>
-        private float ComputeFixedHeight()
+        /// <summary>One window height for the tools with values (the largest of them); the other tools take what they need.</summary>
+        private float SliderToolsHeight()
         {
-            float best = TopY + _toolsPanel.height + 8f;
-            float textW = PanelWidth - 28f;
+            float best = 0f;
             for (int i = 0; i < QuayTool.ModeCount; i++)
             {
                 QuayTool.Mode m = (QuayTool.Mode)i;
-                float descH = TextHeight(DescriptionFor(m), textW) + 14f;
-                if (!SelectMode(m))
-                {
-                    best = Mathf.Max(best, TopY + descH + 12f);
-                    continue;
-                }
-                best = Mathf.Max(best, TopY + LeftOf(m) + BarGap + BarH + 6f + StatusH + DescGap + descH + 10f);
-                if (SliderMode(m)) best = Mathf.Max(best, TopY + RightOf(m) + 52f);
+                if (!SliderMode(m)) continue;
+                best = Mathf.Max(best, TopY + LeftOf(m) + BarGap + BarH + 6f + StatusH + 10f);
+                best = Mathf.Max(best, TopY + RightOf(m) + 52f);
             }
             return best;
         }
 
         /// <summary>
-        /// Columns: 1 = tools, 2 = description (on top for a tool without values; otherwise under the controls of the tool,
-        /// which come first, then the undo / redo / reset bar and the highlight switch), 3 = the sliders (values).
+        /// Columns: 1 = tools (always), 2 = the controls of the tool with the undo / redo / reset bar and the status, 3 = the
+        /// sliders (values). Empty columns are closed: right after the activation only the tools are shown; Invert shows the
+        /// second column only while it has something to say. The description of a tool is its tooltip.
         /// </summary>
         private void UpdateHeight()
         {
             if (!_built) return;
 
+            QuayTool tool = QuayTool.Instance;
+            QuayTool.Mode mode = tool != null ? tool.CurrentMode : QuayTool.Mode.None;
             bool addMode = _net != null && _net.isVisible;
             bool decalMode = _decal != null && _decal.isVisible;
             bool propMode = _prop != null && _prop.isVisible;
             bool lockMode = _lock != null && _lock.isVisible;
             bool select = addMode || decalMode || propMode || lockMode;
             bool sliders = addMode || decalMode || propMode;
+            bool hasStatus = _status != null && !string.IsNullOrEmpty(_status.text);
+
+            int columns = sliders ? 2 : select ? 1 : (mode == QuayTool.Mode.Invert && hasStatus) ? 1 : 0;
+            SetColumns(columns);
 
             float section = addMode ? _netHeight : decalMode ? _decalHeight : propMode ? _propHeight : lockMode ? _lockHeight : 0f;
             float left = addMode ? _netLeft : decalMode ? _decalLeft : propMode ? _propLeft : section;
@@ -1333,7 +1359,9 @@ namespace QuayTools
                 active.height = section;
             }
 
-            float need = ComputeFixedHeight();
+            float need = TopY + _toolsPanel.height + 8f;
+            if (select) need = Mathf.Max(need, TopY + left + BarGap + BarH + 6f + StatusH + 10f);
+            if (sliders) need = Mathf.Max(need, SliderToolsHeight());
             if (select && _openPopup != null)
             {
                 float popupBottom = TopY + _openPopup.Popup.relativePosition.y + _openPopup.Popup.height + 10f;
@@ -1341,40 +1369,53 @@ namespace QuayTools
             }
             height = need;
 
-            float textW = PanelWidth - 28f;
-            float descH = TextHeight(_hint.text, textW) + 14f;
             float x = ToolsWidth;
-
             _hideHl.Button.isVisible = sliders;
             _actionsBack.isVisible = select;
+            _status.isVisible = columns > 0;
 
             if (!select)
             {
-                // no values: the description on top
-                _descPanel.height = descH;
-                _hint.height = descH - 10f;
-                _descPanel.relativePosition = new Vector3(x + 6f, TopY);
-                _status.relativePosition = new Vector3(x + 12f, TopY + descH + 8f);
+                _status.relativePosition = new Vector3(x + 12f, TopY + 4f);
                 return;
             }
 
-            float barY = TopY + left + BarGap;
+            // the block with the delete buttons and the undo / redo / reset bar sits at the very bottom of the window
+            float oldBarY = TopY + left + BarGap;
+            float barY = Mathf.Max(oldBarY, height - 10f - 4f - BarH); // the lower edge of the block is level with the lower edge of the highlight switch (height - 10)
+            float delta = barY - oldBarY;
             _bar.relativePosition = new Vector3(x, barY);
 
+            UIButton first = addMode ? _netRemove : decalMode ? _dRemove : propMode ? _propRemove : null;
+            UIButton second = addMode ? _netClear : decalMode ? _dClear : propMode ? _propClear : null;
+            MoveDown(first, delta);
+            MoveDown(second, delta);
+
             // the delete / undo / redo / reset buttons sit on a lighter box of their own
-            float backTop = act >= 0f ? TopY + act - 6f : barY - 4f;
+            float backTop = (act >= 0f ? TopY + act - 6f : oldBarY - 4f) + delta;
             _actionsBack.relativePosition = new Vector3(x + 4f, backTop);
             _actionsBack.size = new Vector2(PanelWidth - 8f, barY + BarH + 4f - backTop);
 
-            _status.relativePosition = new Vector3(x + 12f, barY + BarH + 10f);
-
-            float descTop = barY + BarH + 10f + StatusH + DescGap;
-            _descPanel.relativePosition = new Vector3(x + 6f, descTop);
-            _descPanel.height = Mathf.Max(descH, height - descTop - 8f);
-            _hint.height = _descPanel.height - 10f;
+            _status.relativePosition = new Vector3(x + 12f, backTop - 20f); // the text about undone actions sits above the block
 
             // the highlight switch: bottom of the third column, only where there are sliders
             _hideHl.Button.relativePosition = new Vector3(x + PanelWidth + 10f, height - 40f);
+            if (_openPopup == null) _hideHl.Button.BringToFront();
+        }
+
+        private readonly Dictionary<UIComponent, float> _baseY = new Dictionary<UIComponent, float>();
+
+        /// <summary>Puts a button at its own place in the section plus delta (its place without a shift is remembered).</summary>
+        private void MoveDown(UIComponent c, float delta)
+        {
+            if (c == null) return;
+            float baseY;
+            if (!_baseY.TryGetValue(c, out baseY))
+            {
+                baseY = c.relativePosition.y;
+                _baseY[c] = baseY;
+            }
+            c.relativePosition = new Vector3(c.relativePosition.x, baseY + delta);
         }
 
         // ---------- texture path section ----------
@@ -1900,7 +1941,7 @@ namespace QuayTools
                 _decalUi.Header.isEnabled = has;
                 UISlider[] sliders = { _dShiftX, _dWidth, _dScale, _dStep, _dBox, _dLateral, _dLift, _dStart, _dEnd };
                 for (int i = 0; i < sliders.Length; i++) sliders[i].isEnabled = has;
-                _dMul.isEnabled = has && !d.Strip; // a plane always multiplies
+                _dMul.isEnabled = has;
                 for (int i = 0; i < _dRgba.Length; i++) _dRgba[i].isEnabled = has;
                 _dHex.isEnabled = has;
                 if (_resetBtn != null) _resetBtn.isEnabled = has;
@@ -2097,7 +2138,7 @@ namespace QuayTools
                 delegate (int u) { OnPropValue("rand", delegate (PropEntry e) { e.ScaleRandom = u; }); });
 
             // rotation controls are hidden for trees (a tree has no direction); they sit in their own panel
-            const float RotHeight = 44f + 36f;
+            const float RotHeight = 44f + 36f + 36f;
             _propRot = _propRight.AddUIComponent<UIPanel>();
             _propRot.width = PanelWidth;
             _propRot.height = RotHeight;
@@ -2107,6 +2148,10 @@ namespace QuayTools
                 delegate (int u) { OnPropValue("angle", delegate (PropEntry e) { e.Angle = u; }); });
             _pRotate = MakeToggle(_propRot, 10f, yr, PanelWidth - 20f, "prandrot", null,
                 delegate (bool v) { OnPropValue("rotate", delegate (PropEntry e) { e.RandomRotation = v; }); });
+            yr += 36f;
+            _pTilt = MakeToggle(_propRot, 10f, yr, PanelWidth - 20f, "ptilt", null,
+                delegate (bool v) { OnPropValue("tilt", delegate (PropEntry e) { e.Tilt = v; }); });
+            _pTilt.Button.tooltip = Loc.T("ptilt_tip");
             y2 += RotHeight;
 
             _propRest = _propRight.AddUIComponent<UIPanel>();
@@ -2252,6 +2297,7 @@ namespace QuayTools
                 _pScaleV.text = e.Scale.ToString();
                 _pRandV.text = e.ScaleRandom.ToString();
                 SetToggle(_pRotate, e.RandomRotation);
+                SetToggle(_pTilt, e.Tilt);
                 ShowPropHeader(e.Prop);
                 UpdateRotationControls(e.Prop);
 
@@ -2265,6 +2311,7 @@ namespace QuayTools
                 UISlider[] sliders = { _pShiftX, _pStep, _pStart, _pEnd, _pLateral, _pLift, _pAngle, _pScale, _pRand };
                 for (int i = 0; i < sliders.Length; i++) sliders[i].isEnabled = has;
                 _pRotate.Button.isEnabled = has;
+                _pTilt.Button.isEnabled = has;
                 if (_resetBtn != null) _resetBtn.isEnabled = false;
 
                 _propState.text = Loc.F("prop_state", have, count);
@@ -2384,7 +2431,12 @@ namespace QuayTools
 
         public void SetStatus(string text)
         {
-            if (_status != null && _status.text != text) _status.text = text;
+            if (_status != null && _status.text != text)
+            {
+                bool hadText = !string.IsNullOrEmpty(_status.text);
+                _status.text = text;
+                if (hadText != !string.IsNullOrEmpty(text)) UpdateHeight(); // the second column of Invert opens and closes with its message
+            }
         }
     }
 }

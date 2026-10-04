@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ColossalFramework.UI;
 using UnityEngine;
 
 namespace QuayTools
@@ -107,6 +108,26 @@ namespace QuayTools
             Vector3 camPos = cam.transform.position;
             Color old = GUI.color;
 
+            // the icons are drawn with the immediate GUI, on top of everything: keep them off the tool window
+            Rect window = new Rect(0f, 0f, 0f, 0f);
+            bool hasWindow = false;
+            QuayToolPanel panel = QuayToolPanel.Instance;
+            if (panel != null && panel.isVisible)
+            {
+                UIView view = UIView.GetAView();
+                if (view != null)
+                {
+                    Vector2 res = view.GetScreenResolution();
+                    if (res.x > 1f && res.y > 1f)
+                    {
+                        float kx = Screen.width / res.x, ky = Screen.height / res.y;
+                        Vector3 ap = panel.absolutePosition;
+                        window = new Rect(ap.x * kx - 6f, ap.y * ky - 6f, panel.width * kx + 12f, panel.height * ky + 12f);
+                        hasWindow = true;
+                    }
+                }
+            }
+
             foreach (KeyValuePair<ushort, int> kv in _marks)
             {
                 Vector3 world = segs[kv.Key].m_middlePosition + new Vector3(0f, 8f, 0f);
@@ -130,8 +151,11 @@ namespace QuayTools
                 float total = count * size + (count - 1) * gap;
                 float x = sp.x - total * 0.5f;
 
+                Rect back = new Rect(x - 3f * mul, sy - size - 3f * mul, total + 6f * mul, size + 6f * mul);
+                if (hasWindow && back.Overlaps(window)) continue;
+
                 GUI.color = new Color(0.08f, 0.1f, 0.14f, 0.8f);
-                GUI.DrawTexture(new Rect(x - 3f * mul, sy - size - 3f * mul, total + 6f * mul, size + 6f * mul), Texture2D.whiteTexture);
+                GUI.DrawTexture(back, Texture2D.whiteTexture);
                 GUI.color = Color.white;
 
                 for (int b = 0; b < Bits.Length; b++)

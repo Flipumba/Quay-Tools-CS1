@@ -14,6 +14,7 @@ namespace QuayTools
     {
         public enum Mode
         {
+            None = -1,        // right after the tool is activated: no tool chosen yet, only the tool column is shown
             Invert = 0,
             Lock = 1,
             RemovePedestrian = 2,
@@ -36,7 +37,7 @@ namespace QuayTools
 
         public static QuayTool Instance { get; private set; }
 
-        public Mode CurrentMode { get; private set; }
+        public Mode CurrentMode { get; private set; } = Mode.None;
 
         /// <summary>Raised when the selection changes; the panel reloads its controls.</summary>
         public event Action SelectionChanged;
@@ -109,6 +110,8 @@ namespace QuayTools
         {
             base.OnEnable();
             Instance = this;
+            CurrentMode = Mode.None; // every activation starts with the tool column only
+            _status = string.Empty;
             if (CurrentMode == Mode.AddNetwork) FenceCatalog.Refresh();
             if (CurrentMode == Mode.Decal) DecalCatalog.Refresh();
             if (CurrentMode == Mode.PropLine) PropCatalog.Refresh();
@@ -200,7 +203,7 @@ namespace QuayTools
 
         private void UpdateHover(bool overUi)
         {
-            if (overUi)
+            if (overUi || CurrentMode == Mode.None)
             {
                 ClearHover();
                 return;

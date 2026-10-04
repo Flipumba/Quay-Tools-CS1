@@ -25,6 +25,7 @@ namespace QuayTools
         private static readonly SavedInt IconSizeValue;
         private static readonly SavedBool HideHighlightValue;
         private static readonly SavedInt LanguageValue;
+        private static readonly SavedString LastSeenValue;
         private static readonly SavedString[] FavValues = new SavedString[3];
 
         /// <summary>Hotkey that activates the Quay Tools (shown/rebindable through UnifiedUI).</summary>
@@ -49,6 +50,7 @@ namespace QuayTools
             IconSizeValue = new SavedInt("MarkIconSize", FileName, 2, true);
             HideHighlightValue = new SavedBool("HideHighlightUi", FileName, false, true);
             LanguageValue = new SavedInt("UiLanguage", FileName, 0, true);
+            LastSeenValue = new SavedString("LastSeenVersion", FileName, string.Empty, true);
             for (int i = 0; i < FavValues.Length; i++) FavValues[i] = new SavedString("Favourites" + i, FileName, string.Empty, true);
             ActivationKey = new SavedInputKey(
                 "ActivationKey", FileName,
@@ -113,6 +115,13 @@ namespace QuayTools
             set { LanguageValue.value = Mathf.Clamp(value, 0, 2); }
         }
 
+        /// <summary>The last version of the mod whose "What's new" window the player has seen (empty on a first installation).</summary>
+        public static string LastSeenVersion
+        {
+            get { return LastSeenValue.value ?? string.Empty; }
+            set { LastSeenValue.value = value ?? string.Empty; }
+        }
+
         /// <summary>Hide the highlight of the quay borders and lines while a slider is being dragged.</summary>
         public static bool HideHighlightUi
         {
@@ -149,6 +158,11 @@ namespace QuayTools
             group.AddDropdown(Loc.T("opt_lang"), new string[] { Loc.T("opt_lang_auto"), "English", "Русский" }, UiLanguage, delegate (int sel)
             {
                 UiLanguage = sel;
+            });
+
+            group.AddButton(Loc.T("opt_whatsnew"), delegate ()
+            {
+                WhatsNew.ShowLatest();
             });
 
             group.AddCheckbox(Loc.T("opt_quickflip"), QuickFlip.value, delegate (bool isChecked)

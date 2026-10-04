@@ -49,11 +49,14 @@ namespace QuayTools
             _hotkeyHost.AddComponent<NetLineRenderer>();
             _hotkeyHost.AddComponent<EditedMarkers>();
             Debug.Log("[QuayTools] Load finished");
+
+            WhatsNew.ShowIfNeeded();
         }
 
         public override void OnLevelUnloading()
         {
             Debug.Log("[QuayTools] OnLevelUnloading");
+            WhatsNew.Close();
             FenceHeight.Clear();
             History.Clear();
             DecalStore.Clear();

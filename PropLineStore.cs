@@ -27,6 +27,7 @@ namespace QuayTools
         public int ShiftX;                   // units of 0.1 m: the props slide along the line (the ends of the line stay)
         public int Angle;                    // degrees, turn of every prop around the vertical axis (0 = prop faces along the quay)
         public bool RandomRotation;
+        public bool Tilt;                    // the prop follows the slope of the height curve (pitch)
         public int Scale = ScaleDefault;     // percent
         public int ScaleRandom;              // percent (0 = all props equal; 30 = 70%..130% of Scale)
 
@@ -39,7 +40,7 @@ namespace QuayTools
         {
             return o != null && Prop == o.Prop && Enabled == o.Enabled && Step == o.Step && StartShift == o.StartShift &&
                    EndShift == o.EndShift && ShiftX == o.ShiftX && Lateral == o.Lateral && Lift == o.Lift && Angle == o.Angle &&
-                   RandomRotation == o.RandomRotation && Scale == o.Scale && ScaleRandom == o.ScaleRandom;
+                   RandomRotation == o.RandomRotation && Tilt == o.Tilt && Scale == o.Scale && ScaleRandom == o.ScaleRandom;
         }
     }
 
@@ -69,7 +70,7 @@ namespace QuayTools
     /// <summary>Thread-safe store of prop lines keyed by segment id, saved in the savegame.</summary>
     internal static class PropLineStore
     {
-        private const int FormatVersion = 2;
+        private const int FormatVersion = 3;
         private static readonly Dictionary<ushort, PropLine> Map = new Dictionary<ushort, PropLine>();
 
         /// <summary>Changes whenever the content changes; the renderer rebuilds what it shows.</summary>
@@ -175,6 +176,7 @@ namespace QuayTools
                             w.Write(e.Scale);
                             w.Write(e.ScaleRandom);
                             w.Write(e.ShiftX);
+                            w.Write(e.Tilt);
                         }
                     }
                 }
@@ -221,6 +223,7 @@ namespace QuayTools
                                 e.Scale = r.ReadInt32();
                                 e.ScaleRandom = r.ReadInt32();
                                 if (version >= 2) e.ShiftX = Mathf.Clamp(r.ReadInt32(), -PropEntry.MaxOffset, PropEntry.MaxOffset);
+                                if (version >= 3) e.Tilt = r.ReadBoolean();
                                 e.Step = Mathf.Clamp(e.Step, PropEntry.StepMin, PropEntry.StepMax);
                                 e.StartShift = Mathf.Clamp(e.StartShift, -PropEntry.MaxShift, 0);
                                 e.EndShift = Mathf.Clamp(e.EndShift, -PropEntry.MaxShift, 0);
