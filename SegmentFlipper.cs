@@ -187,5 +187,32 @@ namespace QuayTools
                 }
             });
         }
+
+        /// <summary>Flips a list of segments (the quay ones among them) on the simulation thread.</summary>
+        public static void RequestFlipList(List<ushort> segments, Action<string> report)
+        {
+            List<ushort> list = new List<ushort>(segments);
+            Singleton<SimulationManager>.instance.AddAction(delegate ()
+            {
+                try
+                {
+                    int n = 0;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        ushort id = list[i];
+                        if (!IsCreated(id) || !IsQuay(NetManager.instance.m_segments.m_buffer[id].Info)) continue;
+                        FlipOne(id);
+                        n++;
+                    }
+                    if (n == 0) report(Loc.T("gone"));
+                    else report(n == 1 ? Loc.T("flipped1") : Loc.F("flippedN", n));
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError("[QuayTools] Flip failed: " + ex);
+                    report(Loc.T("failed"));
+                }
+            });
+        }
     }
 }

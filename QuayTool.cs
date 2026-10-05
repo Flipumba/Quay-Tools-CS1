@@ -15,16 +15,15 @@ namespace QuayTools
         public enum Mode
         {
             None = -1,        // right after the tool is activated: no tool chosen yet, only the tool column is shown
-            Invert = 0,
-            Lock = 1,
-            RemovePedestrian = 2,
-            HideProps = 3,    // hides the default props of the network model of a segment
-            AddNetwork = 4,   // network-model lines ("Network-line")
-            PropLine = 5,
-            Decal = 6         // texture paths ("Texture-path")
+            Segment = 0,      // "Segment Settings": invert, lock, remove pedestrian path, hide default props
+            AddNetwork = 1,   // network-model lines ("Network-line")
+            PropLine = 2,
+            Decal = 3,        // texture paths ("Texture-path")
+            Templates = 4,    // save the lines of a segment as a template, apply a template to the selected segments
+            Settings = 5      // options of the mod and "remove all modifications"; no segments are selected here
         }
 
-        public const int ModeCount = 7;
+        public const int ModeCount = 6;
 
         private static readonly Color HoverColor = new Color(0.10f, 0.70f, 1.00f, 0.55f);
         private static readonly Color ChainColor = new Color(0.30f, 1.00f, 0.55f, 0.55f);
@@ -64,26 +63,25 @@ namespace QuayTools
         /// <summary>Modes that already do something. The rest are shown disabled in the panel.</summary>
         public static bool IsImplemented(Mode mode)
         {
-            return mode == Mode.Invert || mode == Mode.RemovePedestrian || mode == Mode.AddNetwork || mode == Mode.Decal || mode == Mode.PropLine || mode == Mode.Lock || mode == Mode.HideProps;
+            return mode != Mode.None;
         }
 
         /// <summary>Modes in which segments are selected first and edited in the window.</summary>
         public static bool IsSelectMode(Mode mode)
         {
-            return mode == Mode.AddNetwork || mode == Mode.Decal || mode == Mode.PropLine || mode == Mode.Lock || mode == Mode.RemovePedestrian || mode == Mode.HideProps;
+            return mode != Mode.None && mode != Mode.Settings;
         }
 
         public static string HintFor(Mode mode)
         {
             switch (mode)
             {
-                case Mode.Invert: return Loc.T("hint_invert");
+                case Mode.Segment: return Loc.T("hint_segment");
                 case Mode.AddNetwork: return Loc.T("hint_network");
                 case Mode.Decal: return Loc.T("hint_decal");
                 case Mode.PropLine: return Loc.T("hint_props");
-                case Mode.Lock: return Loc.T("hint_lock");
-                case Mode.RemovePedestrian: return Loc.T("hint_nopeds");
-                case Mode.HideProps: return Loc.T("hint_hideprops");
+                case Mode.Templates: return Loc.T("hint_tpl");
+                case Mode.Settings: return Loc.T("hint_settings");
             }
             return Loc.T("hint_soon");
         }
@@ -203,7 +201,7 @@ namespace QuayTools
 
         private void UpdateHover(bool overUi)
         {
-            if (overUi || CurrentMode == Mode.None)
+            if (overUi || !IsSelectMode(CurrentMode))
             {
                 ClearHover();
                 return;
@@ -239,44 +237,44 @@ namespace QuayTools
 
         private void ApplyClick()
         {
-            switch (CurrentMode)
-            {
-                case Mode.Invert:
-                    SegmentFlipper.RequestFlip(_hoverSegment, _hoverIsChain, delegate (string s) { _status = s; });
-                    _cacheSegment = 0;
-                    break;
-
-                case Mode.AddNetwork:
-                case Mode.Decal:
-                case Mode.PropLine:
-                case Mode.Lock:
-                case Mode.RemovePedestrian:
-                case Mode.HideProps:
-                    ToggleSelection();
-                    break;
-            }
+            if (IsSelectMode(CurrentMode)) ToggleSelection();
         }
 
+        /// <summary>
+        /// Click: only this segment is selected. Shift + click: the whole connected quay. Ctrl + click: adds the segment to the
+        /// selection or removes it (with Shift as well: the whole quay is added or removed).
+        /// </summary>
         private void ToggleSelection()
         {
-            if (_hoverIsChain)
-            {
-                bool allSelected = true;
-                for (int i = 0; i < _hoverList.Count; i++)
-                {
-                    if (!_selected.Contains(_hoverList[i])) { allSelected = false; break; }
-                }
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
 
-                for (int i = 0; i < _hoverList.Count; i++)
-                {
-                    ushort id = _hoverList[i];
-                    if (allSelected) _selected.Remove(id);
-                    else if (!_selected.Contains(id)) _selected.Add(id);
-                }
-            }
-            else
+            if (!ctrl)
             {
-                if (!_selected.Remove(_hoverSegment)) _selected.Add(_hoverSegment);
+                // replace the selection (nothing changes when exactly this one is selected already)
+                bool same = _selected.Count == _hoverList.Count;
+                for (int i = 0; same && i < _hoverList.Count; i++)
+                {
+                    if (!_selected.Contains(_hoverList[i])) same = false;
+                }
+                if (same) return;
+
+                _selected.Clear();
+                _selected.AddRange(_hoverList);
+                RaiseSelectionChanged();
+                return;
+            }
+
+            bool allSelected = true;
+            for (int i = 0; i < _hoverList.Count; i++)
+            {
+                if (!_selected.Contains(_hoverList[i])) { allSelected = false; break; }
+            }
+
+            for (int i = 0; i < _hoverList.Count; i++)
+            {
+                ushort id = _hoverList[i];
+                if (allSelected) _selected.Remove(id);
+                else if (!_selected.Contains(id)) _selected.Add(id);
             }
 
             RaiseSelectionChanged();
@@ -285,6 +283,11 @@ namespace QuayTools
         // ---------- actions requested by the panel ----------
 
         private void Report(string s)
+        {
+            _status = s;
+        }
+
+        internal void Say(string s)
         {
             _status = s;
         }
@@ -322,12 +325,20 @@ namespace QuayTools
 
         // orientation lock
 
-        public void SetLock(bool locked)
+        /// <summary>kind: "lock" (orientation lock), "nop" (remove pedestrian path), "hp" (hide default props).</summary>
+        public void SetSegmentFlag(string kind, bool on)
         {
             if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
-            if (CurrentMode == Mode.RemovePedestrian) FenceApplier.SetNoPeds(SelectionCopy(), locked, Report);
-            else if (CurrentMode == Mode.HideProps) FenceApplier.SetHideProps(SelectionCopy(), locked, Report);
-            else FenceApplier.SetLock(SelectionCopy(), locked, Report);
+            if (kind == "nop") FenceApplier.SetNoPeds(SelectionCopy(), on, Report);
+            else if (kind == "hp") FenceApplier.SetHideProps(SelectionCopy(), on, Report);
+            else FenceApplier.SetLock(SelectionCopy(), on, Report);
+        }
+
+        /// <summary>Flips the Invert flag of the selected segments (the same mechanics as the former Invert tool).</summary>
+        public void FlipSelected()
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            SegmentFlipper.RequestFlipList(SelectionCopy(), Report);
         }
 
         // prop lines
@@ -392,6 +403,134 @@ namespace QuayTools
             else if (CurrentMode == Mode.AddNetwork) FenceApplier.ResetNetLines(SelectionCopy(), Report);
         }
 
+        /// <summary>Saves the lines of the first selected segment as a template. Returns the new template or null (the status says why).</summary>
+        internal QuayTemplate SaveTemplate(string name, List<QuayTemplate> existing)
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return null; }
+
+            string error;
+            QuayTemplate t = TemplateStore.SaveFromSegment(name, _selected[0], existing, out error);
+            if (t == null) _status = Loc.T(error);
+            else _status = Loc.F("tpl_saved", t.Name);
+            return t;
+        }
+
+        // ---------- template picture ----------
+
+        /// <summary>True while the picture of a template is rendered (the highlights of the tool are not drawn then).</summary>
+        public static volatile bool Capturing;
+
+        private const int ThumbW = 480, ThumbH = 270;
+
+        /// <summary>Renders what the main camera sees (no interface, no highlights) into a png file; done(true) when it worked.</summary>
+        internal void CaptureThumbnail(string path, Action<bool> done)
+        {
+            StartCoroutine(CaptureRoutine(path, done));
+        }
+
+        private System.Collections.IEnumerator CaptureRoutine(string path, Action<bool> done)
+        {
+            yield return new WaitForEndOfFrame();
+
+            bool ok = false;
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture rt = null;
+            Texture2D tex = null;
+            Camera cam = Camera.main;
+            RenderTexture oldTarget = null;
+            try
+            {
+                if (cam != null)
+                {
+                    Capturing = true;
+                    oldTarget = cam.targetTexture;
+                    rt = new RenderTexture(ThumbW, ThumbH, 24, RenderTextureFormat.ARGB32);
+                    cam.targetTexture = rt;
+                    cam.aspect = ThumbW / (float)ThumbH;
+                    cam.Render();
+
+                    RenderTexture.active = rt;
+                    tex = new Texture2D(ThumbW, ThumbH, TextureFormat.RGB24, false);
+                    tex.ReadPixels(new Rect(0f, 0f, ThumbW, ThumbH), 0, 0);
+                    tex.Apply();
+                    System.IO.File.WriteAllBytes(path, tex.EncodeToPNG());
+                    ok = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[QuayTools] Could not render the template picture: " + ex);
+            }
+            finally
+            {
+                try
+                {
+                    if (cam != null)
+                    {
+                        cam.targetTexture = oldTarget;
+                        cam.ResetAspect();
+                    }
+                }
+                catch (Exception) { }
+                Capturing = false;
+                RenderTexture.active = previous;
+                if (rt != null) Destroy(rt);
+                if (tex != null) Destroy(tex);
+            }
+
+            if (done != null) done(ok);
+        }
+
+        /// <summary>Replaces the lines of every selected segment with the lines of the template (one undo step).</summary>
+        internal void ApplyTemplate(QuayTemplate template)
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+
+            int missing;
+            QuayTemplate t = template.ResolveModels(out missing);
+            Action<string> report = delegate (string s)
+            {
+                _status = missing > 0 ? s + " " + Loc.F("tpl_missing", missing) : s;
+            };
+
+            FenceApplier.Run(SelectionCopy(), null, delegate (ushort id)
+            {
+                NetLineSet nets;
+                PropLine props;
+                DecalSet decals;
+                t.Build(TemplateStore.SegmentLength(id), out nets, out props, out decals);
+                NetLineStore.Set(id, nets);
+                PropLineStore.Set(id, props);
+                DecalStore.Set(id, decals);
+            }, "tpl_applied", report, true);
+        }
+
+        /// <summary>
+        /// Removes every modification of Quay Tools from every segment of the savegame: network-lines, props-lines, texture-paths,
+        /// locks, removed pedestrian paths, hidden default props (one undo step). Flipped segments stay flipped.
+        /// </summary>
+        internal void ClearAllModifications()
+        {
+            HashSet<ushort> all = new HashSet<ushort>();
+            all.UnionWith(NetLineStore.Keys());
+            all.UnionWith(PropLineStore.Keys());
+            all.UnionWith(DecalStore.Keys());
+            all.UnionWith(LockStore.Snapshot());
+            all.UnionWith(PedStore.Snapshot());
+            all.UnionWith(HideStore.Snapshot());
+            if (all.Count == 0) { _status = Loc.T("clear_all_none"); return; }
+
+            FenceApplier.Run(new List<ushort>(all), null, delegate (ushort id)
+            {
+                NetLineStore.Remove(id);
+                PropLineStore.Remove(id);
+                DecalStore.Remove(id);
+                LockStore.SetRaw(id, -1);
+                PedStore.SetBlocked(id, false);
+                HideStore.SetHidden(id, false);
+            }, "clear_all_done", Report, true);
+        }
+
         public void Undo()
         {
             History.Undo(Report);
@@ -427,6 +566,7 @@ namespace QuayTools
         public override void RenderOverlay(RenderManager.CameraInfo cameraInfo)
         {
             base.RenderOverlay(cameraInfo);
+            if (Capturing) return; // the picture of a template shows the scene only, without our highlights
 
             // while a slider is dragged (and the option is on) the highlights are hidden so that the result can be seen
             if (Settings.HideHighlightUi && QuayToolPanel.SliderDragging) return;
@@ -441,13 +581,17 @@ namespace QuayTools
                 }
             }
 
-            if (CurrentMode == Mode.Lock || CurrentMode == Mode.RemovePedestrian || CurrentMode == Mode.HideProps)
+            if (CurrentMode == Mode.Segment)
             {
                 // every locked / pedestrian-free / props-free segment is marked red
-                List<ushort> locked = CurrentMode == Mode.Lock ? LockStore.Snapshot() : CurrentMode == Mode.HideProps ? HideStore.Snapshot() : PedStore.Snapshot();
-                for (int i = 0; i < locked.Count; i++)
+                List<ushort> marked = new List<ushort>(LockStore.Snapshot());
+                List<ushort> more = PedStore.Snapshot();
+                for (int i = 0; i < more.Count; i++) if (!marked.Contains(more[i])) marked.Add(more[i]);
+                more = HideStore.Snapshot();
+                for (int i = 0; i < more.Count; i++) if (!marked.Contains(more[i])) marked.Add(more[i]);
+                for (int i = 0; i < marked.Count; i++)
                 {
-                    if (!_selected.Contains(locked[i])) QuayGeometry.DrawModel(cameraInfo, locked[i], LockedColor);
+                    if (!_selected.Contains(marked[i])) QuayGeometry.DrawModel(cameraInfo, marked[i], LockedColor);
                 }
             }
 

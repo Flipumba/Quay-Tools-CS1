@@ -4,8 +4,8 @@
     <TargetFramework>net35</TargetFramework>
     <AssemblyName>QuayTools</AssemblyName>
     <RootNamespace>QuayTools</RootNamespace>
-    <AssemblyVersion>0.5.7.0</AssemblyVersion>
-    <FileVersion>0.5.7.0</FileVersion>
+    <AssemblyVersion>0.6.0.0</AssemblyVersion>
+    <FileVersion>0.6.0.0</FileVersion>
     <LangVersion>7.3</LangVersion>
     <DebugType>none</DebugType>
     <Deterministic>true</Deterministic>
@@ -55,10 +55,12 @@
       <ModDll Include="$(TargetDir)UnifiedUILib.dll" />
       <ModDll Include="$(TargetDir)CitiesHarmony.API.dll" />
       <ModIcon Include="$(MSBuildProjectDirectory)\Icons\*.png" />
+      <ModLocale Include="$(MSBuildProjectDirectory)\Locales\*.json" />
     </ItemGroup>
-    <MakeDir Directories="$(ModDeployDir);$(ModDeployDir)\Icons" />
+    <MakeDir Directories="$(ModDeployDir);$(ModDeployDir)\Icons;$(ModDeployDir)\Locales" />
     <Copy SourceFiles="@(ModDll)" DestinationFolder="$(ModDeployDir)" />
     <Copy SourceFiles="@(ModIcon)" DestinationFolder="$(ModDeployDir)\Icons" />
+    <Copy SourceFiles="@(ModLocale)" DestinationFolder="$(ModDeployDir)\Locales" />
     <Message Importance="high" Text="QuayTools deployed to $(ModDeployDir)" />
   </Target>
 

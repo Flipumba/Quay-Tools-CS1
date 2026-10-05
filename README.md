@@ -1,6 +1,6 @@
 # Quay Tools — Cities: Skylines 1
 
-**Version: v0.5.7**
+**Version: v0.6.0**
 
 Quay Tools is a Cities: Skylines 1 mod with additional tools for working with quay segments.
 
@@ -11,15 +11,16 @@ Quay Tools is a Cities: Skylines 1 mod with additional tools for working with qu
 - Adds a **UnifiedUI button** that activates Quay Tools and opens a small tool window.
 - If UnifiedUI is not installed or enabled, a small floating button is created instead.
 
-### Invert Segment
+### Segment Settings
 
-Flip the direction of a quay segment without rebuilding it.
+One tool (crossed wrench and screwdriver) for the settings of whole quay segments. Select segments (a click selects one segment, **Shift** + click the whole connected quay, **Ctrl** + click adds or removes segments; right click clears the selection, then exits), then use the rows of the window. Each row has the icon of its function on the left:
 
-- Hover over a quay to highlight it. The highlight follows the visible quay model.
-- **Left click** flips the highlighted segment.
-- Hold **Shift** to highlight and flip the entire connected quay (blue = single segment, green = connected quay).
-- **Right click** exits the tool.
-- Network lines, prop lines and texture paths follow the water side when a segment is flipped.
+- **Invert segment** (green check button): flips the direction of the selected segments; press again to flip back. Network lines, prop lines and texture paths follow the water side when a segment is flipped.
+- **Lock orientation** (switch): the game or another mod can no longer flip the selected segments; if it does, the segment is flipped back right after that simulation step. The Invert button and Ctrl+R of Quay Tools still work on a locked segment, and the lock keeps the new orientation.
+- **Remove pedestrian path** (switch): citizens do not walk on the selected segments and do not see them as a path (the pathfinder skips them, also with TM:PE). Citizens whose route already crosses one get a new route. Vehicle-only paths are not affected; use it only on pedestrian quays.
+- **Hide default props** (switch): hides the props that come with the quay model (lights, trees, benches) on the selected segments. Your own Props-line props stay. Other segments of the same quay type are not affected.
+
+Segments with a lock, without a pedestrian path or with hidden props are drawn red while the tool is active. A switch shows "on" when all selected segments have the setting.
 
 #### Quick Flip
 
@@ -29,42 +30,27 @@ Flip a quay without activating the tool:
 - **Ctrl + R + Shift** flips the entire connected quay.
 - The hotkey can be changed or disabled in the mod options.
 
-### Lock Segment
+### Templates
 
-Stops the game (or another mod) from flipping a quay segment on its own, for example while nodes are moved.
+Saves everything that is drawn along a quay segment and puts it on other segments. Select segments (click, **Shift**, **Ctrl** as above), type a name and press **Save as template**: the network-lines, props-lines (trees included) and texture-paths (models and all values, in their order) of the **first selected segment** are saved, together with a **picture**: a screenshot of the scene without the interface. Choose a template in the drop-down list (with the pictures) and press **Apply to selected**: the lines of all selected segments are **replaced** (no confirmation; **Undo** brings them back, one step for the whole apply).
 
-1. Select the **Lock segment orientation** tool (padlock icon).
-2. Select quay segments (**Shift** selects the whole connected quay) and press **Lock selected segments**. Locked segments are drawn red while the tool is active.
-3. If a locked segment is flipped by something else, it is flipped back right after that simulation step . **Unlock selected segments** removes the lock.
-4. The Invert tool and Ctrl+R of Quay Tools still work on a locked segment; the lock keeps the new orientation.
+The **pencil** next to the chosen template opens the template settings (third column): rename, a new screenshot (put the camera first), **Duplicate**, **Delete**, **Open folder**, and the list of the lines of the template, where any line can be removed.
 
-The lock is saved in the savegame (`QuayTools.Locks`). If another mod keeps flipping a segment back and forth, the lock is released and a line is written to the log.
+- Start / end trims are saved as a share of the segment length, so a template fits segments of any length; all other values are absolute.
+- A model that is not loaded in the game (a missing asset) is reported in the status line and its slot stays empty; the other lines are applied.
+- Templates are text files (and a `.png` picture) in the game's local data folder, `QuayTools/Templates` (file name = name + short code, `.qtpl`). They are shared by all cities. A damaged file is skipped and logged. A name that already exists gets " (2)"; the characters `/ \ : * ? " < > |` cannot be typed.
 
-### Remove Pedestrian Path
+### Settings
 
-Makes citizens stop using a quay as a footpath.
+The last tool (gear). The options that are used while playing are here: **Quick flip** (the Ctrl + key hotkey over a quay), **Path shadows**, **Mark edited segments**, and the size of the icons above them. **Controls help** opens a third column that lists all the keys and mouse buttons (the tool hints no longer repeat them). The hotkey itself, the language, the swap of land and water, and the Ctrl+Z / Ctrl+Y option stay in the mod options.
 
-1. Select the **Remove pedestrian path** tool (crossed-out pedestrian icon), select quay segments (**Shift**: whole connected quay).
-2. Press **Remove pedestrian path on selected**. The segments are marked red; the pathfinder skips them, so pedestrians neither route over them nor see them as a path. **Restore pedestrian path on selected** undoes it.
-3. Citizens whose route already crosses such a segment get a new route (also when a save is loaded); new paths avoid it. Every path that may use pedestrian lanes (walking, with public transport, or "any means") skips the segment; vehicle-only paths are not affected.
-
-Implemented with Harmony patches on the `ProcessItem*` methods of `PathFind` and of path-finder classes derived from it (TM:PE's `CustomPathFind`) that receive a segment id; they are found by reflection and listed in the log (`Pedestrian block: patched N new method(s)`). If a game update changes them the feature is simply unavailable. Saved in the savegame (`QuayTools.NoPeds`).
-
-### Hide Default Props
-
-Hides the props that come with the network model of a quay (street lights, trees, benches along its lanes).
-
-1. Select the **Hide default props** tool (crossed-out trees icon), select quay segments (**Shift**: whole connected quay).
-2. Press **Hide default props on selected**. The segments are marked red; **Show default props on selected** undoes it.
-3. Only the props of the network model itself are hidden, and only on the selected segments (other segments of the same quay type keep them). Props placed with **Props-line** are separate and stay.
-
-Implemented with Harmony patches on `NetLane.RenderInstance` / `PopulateGroupData` (found by reflection, listed in the log as `Hide props: patched N NetLane method(s)`). Saved in the savegame (`QuayTools.HideProps`).
+**Clear all quays** removes every change of Quay Tools from all segments of the savegame (network-lines, props-lines, texture-paths, locks, removed pedestrian paths, hidden default props) after a confirmation. **Undo** brings everything back; flipped segments stay flipped.
 
 ### Network-line
 
 Draws network models (fences, walls, ...) along quay segments. Any number of lines per segment, like Props-line.
 
-1. Select the **Network-line** tool. Select quay segments (orange; **Shift**: whole connected quay; **right click** clears the selection).
+1. Select the **Network-line** tool. Select quay segments (orange; click: one segment, **Shift**: whole connected quay, **Ctrl**: add or remove; **right click** clears the selection).
 2. Press **+ Add network model**. A line is added to every selected segment, **in the middle of the quay**; use **< >** to switch between the lines of the selection (the line being edited is drawn as a blue stripe).
 3. The window has two columns. Left column: the selection and line switch, **Add network model**, the **Network model** drop-down list (preview and name, search field, scrolling, **star** = favourite: favourites are listed first and are kept in the mod settings for all savegames), **Turn the model around**, **Close line at segment start / end**, **Remove this line** / **Remove all lines**, then **Undo / Redo / Reset**. Right column (the values; slider, or type a value in the field next to it, double-click a slider to reset it):
    - **Line start** / **Line end** (0 to −50 m): the line runs from the **middle of the start node to the middle of the end node** (across the node it follows its bend and height curve). The offset moves the start or the end of the line back toward the segment, up to the border of the node and further, without joining it to the neighbouring segment.
@@ -214,7 +200,27 @@ Only needed to compile the mod yourself (restored by NuGet, except the game DLLs
 - Game APIs used: `QuayAI`, `ToolBase` (`OnEnable`, `OnDisable`, `OnToolUpdate`, `RenderOverlay`), `OverlayEffect.DrawBezier`, `NetSegment.CalculateCorner`, `NetSegment.RenderSegments`, `NetManager.EndRenderingImpl`, `PrefabCollection<NetInfo>`, `SerializableDataExtensionBase`, cs UI components (`UISlider`, `UIScrollbar`, ...).
 - `ToolInstaller` adds the tool component to the private `m_tools` array via reflection.
 
+## Translating
+
+Translations live in `Locales/<code>.json` (flat key → text). `en.json` is the source file synced with [Crowdin](https://ru.crowdin.com/project/quay-tools-for-cities-skylines). Keep placeholders such as `{0}`, `{act}`, `{flip}` untouched. Missing keys fall back to English; the language list in the options shows only languages whose file exists. `Tools/gen_locales.py` regenerates `en.json`/`ru.json` from the built-in table in `Loc.cs`.
+
 ## Changelog
+
+### v0.6.0
+- New tool **Segment Settings** (crossed wrench and screwdriver) replaces four tools: **Invert segment**, **Lock segment**, **Remove pedestrian path** and **Hide default props** are now rows of one window with the icon of the function on the left: Invert is a button with a green check, the others are switches.
+- All check-box buttons of all tools ("[x] text") are now switches: the text on the left, a switch on the right (bright green = on, red = the selected segments differ).
+- New tool **Templates** (button at the bottom of the tool column): save the network-lines, props-lines and texture-paths of a segment as a template with a picture (screenshot without the interface), choose it in a drop-down list and apply it to other segments (replaces their lines, one Undo step). Template settings (pencil): rename, new screenshot, duplicate, delete, open folder, remove single lines.
+- The window keeps the same height for all tools; at the first start it appears at the left edge of the screen, in the middle of its height.
+- Selection in all tools: a click selects one segment (and drops the previous selection), **Shift** + click the whole connected quay, **Ctrl** + click adds or removes segments.
+- New tool **Settings** (gear, last in the tool column): the game-time options moved here from the mod options; **Clear all quays** (with a confirmation, one Undo step).
+- The window has a new flat look (dark green-black with a yellow accent, like the preview picture): slightly rounded corners, a thin yellow frame on hover, a yellow flash on click, and the chosen tool shows only its icon with the frame.
+- The option "Centre line at bends" was removed: it acted only on texture-paths across sharp bends of nodes of other mods, and nothing was redrawn when it was switched, so it looked broken. The behaviour is always on now.
+- Delete questions (template, template line, all modifications) are solid boxes with Delete / Cancel buttons.
+- The mod page in the game options is redrawn in the same flat style: header with the mod icon, **What's new** (with a switch for the update window), **Language**, **Hotkeys** (click a field and press the new keys: tool activation, quick flip), **Settings** (all options with short names, full descriptions as tooltips, the new switch **Hide tooltips**) and **Support** (links to Crowdin, GitHub, Boosty).
+- The mod page has three tabs: **Main**, **Advanced** (changelog, a compatibility check of the mod, reset of all settings with a confirmation, copy the game log to the desktop) and **Links** (Crowdin, GitHub, Boosty, Steam Workshop page).
+- Translations are now loaded from `Locales/*.json` (Crowdin-ready) with English fallback.
+- **What's new** shows only the newest version; **Changelog** (Advanced tab) lists all versions from 0.3.5 as folding cards with Added / Updated / Fixed tags.
+- The quick-flip key can now be any key (with Ctrl / Alt if you like) instead of one of five.
 
 ### v0.5.7
 - The **What's new** window now lists the changes from v0.5.6 (English and Russian); the options button shows all of them.

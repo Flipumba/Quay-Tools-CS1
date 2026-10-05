@@ -21,8 +21,10 @@ namespace QuayTools
         {
             FenceHeight.Drain();
             if (!Settings.QuickFlipEnabled) return;
-            if (!Input.GetKeyDown(Settings.Hotkey)) return;
-            if (!IsCtrlHeld()) return;
+            ColossalFramework.SavedInputKey flip = Settings.FlipKey;
+            if (!Input.GetKeyDown(flip.Key)) return;
+            if (flip.Control && !IsCtrlHeld()) return;
+            if (flip.Alt && !(Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt))) return;
             if (UIView.IsInsideUI()) return; // don't act when the mouse is over game UI
 
             ushort segmentId;

@@ -25,15 +25,20 @@ namespace QuayTools
 
         public static QuayToolPanel Instance { get; private set; }
 
-        private static readonly string[] TitleKeys = { "mode_invert", "mode_lock", "mode_nopeds", "mode_hideprops", "mode_network", "mode_props", "mode_decal" };
-        private static readonly string[] IconFiles = { "Invert.png", "Lock.png", "NoPedestrian.png", "HideProps.png", "Network.png", "Props.png", "Decal.png" };
+        private static readonly string[] TitleKeys = { "mode_segment", "mode_network", "mode_props", "mode_decal", "mode_templates", "mode_settings" };
+        private static readonly string[] IconFiles = { "Segment.png", "Network.png", "Props.png", "Decal.png", "Templates.png", "Settings.png" };
 
         /// <summary>A check box drawn as a button: "[x] text".</summary>
+        private const float SwitchW = 38f, SwitchH = 20f, SwitchKnob = 14f;
+
         private class Toggle
         {
             public UIButton Button;
             public bool Value;
             public string TextKey;
+            public UIPanel Pill;   // the switch: a pill with a round knob
+            public UIPanel Knob;
+            public bool Mixed;     // several segments selected with different states
         }
 
         /// <summary>One row of a drop-down list (Tag: NetInfo for fence models, DecalEntry for decals).</summary>
@@ -45,6 +50,7 @@ namespace QuayTools
             public object Tag;
             public string Key;   // what identifies the item for favourites
             public bool Fav;
+            public Texture2D Tex; // a picture instead of the atlas icon (templates)
         }
 
         /// <summary>One pooled row of a drop-down list.</summary>
@@ -54,6 +60,7 @@ namespace QuayTools
             public UISprite Icon;
             public UIButton StarButton;
             public UITextureSprite Star;
+            public UITextureSprite Tex;
             public PickItem Item;
             public bool Empty;
         }
@@ -77,10 +84,13 @@ namespace QuayTools
             public List<PickItem> Entries = new List<PickItem>(); // what the list shows (null = the empty row)
             public int Offset;                        // first visible entry
             public bool SyncBar;
+            public bool Textured;                     // wide picture (16:9) in the header and in the rows
+            public UITextureSprite Pic;
         }
 
         private UIDragHandle _drag;
         private UIButton[] _modeButtons;
+        private UITextureSprite[] _modeIcon;
         private UILabel _title;
         private UIPanel _toolsPanel;
         private Toggle _hideHl;
@@ -89,11 +99,14 @@ namespace QuayTools
         private UIPanel _actionsBack;
         private float _netAct, _decalAct, _propAct;
         private const float BtnStride = 40f;
+        private const float ToolBtnH = 46f;
+        private static readonly float ToolsMin = 8f + QuayTool.ModeCount * (ToolBtnH + 4f);
         private const float ToggleStride = 38f;
         private bool _built;
         private int _langBuilt;
         private static Vector3 _restorePos;
         private static bool _hasRestorePos;
+        private bool _centerPending;
         private bool _loading;
 
         private PickerUi _openPopup;
@@ -114,9 +127,49 @@ namespace QuayTools
         // orientation lock section
         private UIPanel _lock;
         private float _lockHeight;
-        private UILabel _lockSel, _lockState;
-        private UIButton _lockBtn, _unlockBtn;
+        private UILabel _lockSel;
+        private Toggle _tgLock, _tgNop, _tgHide;
+        private UIButton _flipBtn;
         private int _lockVersion = -1;
+
+        // settings section
+        private UIPanel _set;
+        private float _setHeight;
+        private Toggle _setFlip, _setShadows, _setMark;
+        private float _setAct;
+        private UIButton _setHelp;
+        private UIPanel _help;
+        private UIScrollablePanel _helpScroll;
+        private UIScrollbar _helpBar;
+        private UISlicedSprite _helpTrack;
+        private UIButton[] _setIcon;
+        private UIButton _setClear;
+
+        // templates section
+        private UIPanel _tpl;
+        private float _tplHeight;
+        private UILabel _tplSel, _tplInfo;
+        private UITextField _tplName;
+        private UIButton _tplSave, _tplApply, _tplPencil;
+        private PickerUi _tplUi;
+        private List<QuayTemplate> _templates = new List<QuayTemplate>();
+        private QuayTemplate _tplPicked;
+
+        // template settings (the third column)
+        private const int TplLineRows = 6;
+        private UIPanel _tplEdit;
+        private float _tplEditHeight;
+        private bool _tplEditOpen;
+        private string _tplEditFor;
+        private UITextField _tplEditName;
+        private UITextureSprite _tplEditPic;
+        private UILabel _tplEditNoPic, _tplEditPage;
+        private UIButton _tplEditRename, _tplEditShot, _tplEditDup, _tplEditDelete, _tplEditFolder, _tplEditPrev, _tplEditNext;
+        private UIButton[] _tplLineBtn, _tplLineDel;
+        private int _tplLineOffset;
+        private UIPanel _dlg;            // the question before something is deleted
+        private UILabel _dlgText;
+        private Action _dlgYes;
 
         // prop line section
         private UIPanel _prop, _propRight;
@@ -201,16 +254,60 @@ namespace QuayTools
             base.Awake();
             width = ToolsWidth;
             height = TopY + 600f;
-            backgroundSprite = "MenuPanel2";
+            backgroundSprite = Flat.Round;
+            atlas = Flat.Atlas;
+            color = WinBg;
             isInteractive = true;
             canFocus = true;
 
             Vector2 res = UIView.GetAView().GetScreenResolution();
-            absolutePosition = new Vector3(Mathf.Max(20f, res.x - (ToolsWidth + PanelWidth * 2f) - 20f), 120f);
+            absolutePosition = new Vector3(20f, 120f); // the left edge of the screen; the height is known later, see Start
+            _centerPending = !_hasRestorePos;
             if (_hasRestorePos)
             {
                 absolutePosition = _restorePos;
                 _hasRestorePos = false;
+            }
+        }
+
+        private readonly Dictionary<UIComponent, string> _hiddenTips = new Dictionary<UIComponent, string>();
+
+        public override void Update()
+        {
+            base.Update();
+            try
+            {
+                if (!Settings.HideTips)
+                {
+                    if (_hiddenTips.Count > 0)
+                    {
+                        foreach (KeyValuePair<UIComponent, string> kv in _hiddenTips)
+                        {
+                            if (kv.Key != null) kv.Key.tooltip = kv.Value;
+                        }
+                        _hiddenTips.Clear();
+                    }
+                    return;
+                }
+
+                // tooltips of the components under the mouse are taken away (and given back when the option is off)
+                for (UIComponent c = UIInput.hoveredComponent; c != null; c = c.parent)
+                {
+                    if (c == this) break;
+                    if (c.parent == null) return;
+                }
+                for (UIComponent c = UIInput.hoveredComponent; c != null && c != this; c = c.parent)
+                {
+                    if (!string.IsNullOrEmpty(c.tooltip))
+                    {
+                        _hiddenTips[c] = c.tooltip;
+                        c.tooltip = string.Empty;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // the tooltips just stay
             }
         }
 
@@ -223,23 +320,78 @@ namespace QuayTools
             if (tool != null) tool.SelectionChanged += OnSelectionChanged;
 
             Refresh();
+
+            if (_centerPending)
+            {
+                // first appearance: at the left edge of the screen, in the middle of its height
+                _centerPending = false;
+                Vector2 screen = UIView.GetAView().GetScreenResolution();
+                absolutePosition = new Vector3(20f, Mathf.Max(10f, (screen.y - height) * 0.5f));
+            }
         }
 
         // ---------- small UI helpers ----------
 
-        private static void StyleButton(UIButton button)
+        // flat palette (the colours of the preview picture): dark green-black, one yellow accent
+        internal static readonly Color32 WinBg = new Color32(36, 50, 54, 255);
+        internal static readonly Color32 ColumnBg = new Color32(27, 39, 43, 255);
+        internal static readonly Color32 BoxBg = new Color32(46, 63, 68, 255);
+        internal static readonly Color32 BtnBg = new Color32(60, 80, 86, 255);
+        internal static readonly Color32 BtnOff = new Color32(44, 58, 62, 255);
+        internal static readonly Color32 FieldBg = new Color32(24, 34, 37, 255);
+        internal static readonly Color32 Accent = new Color32(250, 200, 40, 255);
+        internal static readonly Color32 Dim = new Color32(52, 60, 64, 255);        // slider tracks, fields and empty pictures while nothing is selected
+        internal static readonly Color32 DimThumb = new Color32(176, 182, 184, 255);
+        internal static readonly Color32 TextMain = new Color32(232, 238, 238, 255);
+
+        /// <summary>Flat button: one plain sprite, the state shows in the colour.</summary>
+        internal static void StyleButton(UIButton button)
         {
-            button.normalBgSprite = "ButtonMenu";
-            button.hoveredBgSprite = "ButtonMenuHovered";
-            button.pressedBgSprite = "ButtonMenuPressed";
-            button.focusedBgSprite = "ButtonMenuFocused";
-            button.disabledBgSprite = "ButtonMenuDisabled";
+            button.atlas = Flat.Atlas;
+            button.normalBgSprite = Flat.Round;
+            button.hoveredBgSprite = Flat.Round;
+            button.pressedBgSprite = Flat.Round;
+            button.focusedBgSprite = Flat.Round;
+            button.disabledBgSprite = Flat.Round;
+            button.color = BtnBg;
+            button.hoveredColor = BtnBg;   // the hover shows as a thin yellow frame, not as a fill
+            button.pressedColor = Accent;  // a click flashes the whole button yellow
+            button.focusedColor = BtnBg;
+            button.disabledColor = BtnOff;
+            button.textColor = TextMain;
+            button.hoveredTextColor = new Color32(255, 255, 255, 255);
+            button.pressedTextColor = new Color32(24, 34, 36, 255);
+            button.focusedTextColor = new Color32(255, 255, 255, 255);
+            button.disabledTextColor = new Color32(104, 120, 122, 255);
+            Flat.AddFrame(button);
+        }
+
+        /// <summary>A button whose look must not change when it keeps the focus after a click (switch rows).</summary>
+        private static void NoFocusLook(UIButton b)
+        {
+            b.focusedColor = b.color;
+        }
+
+        private static void FlatField(UITextField f)
+        {
+            f.atlas = Flat.Atlas;
+            f.normalBgSprite = Flat.Round;
+            f.hoveredBgSprite = Flat.Round;
+            f.focusedBgSprite = Flat.Round;
+            f.color = FieldBg;
+            f.disabledColor = Dim;
+            f.eventIsEnabledChanged += delegate (UIComponent c, bool v) { f.color = v ? FieldBg : Dim; };
+            f.textColor = TextMain;
         }
 
         /// <summary>Delete buttons: the normal button tinted dark red.</summary>
         private static void MakeRed(UIButton b)
         {
             b.color = new Color32(176, 62, 62, 255);
+            b.hoveredColor = b.color;
+            b.focusedColor = b.color;
+            b.pressedColor = new Color32(140, 40, 40, 255);
+            b.pressedTextColor = new Color32(255, 255, 255, 255);
             b.hoveredTextColor = new Color32(255, 255, 255, 255);
         }
 
@@ -264,16 +416,21 @@ namespace QuayTools
             slider.value = reset;
 
             UISlicedSprite track = slider.AddUIComponent<UISlicedSprite>();
-            track.spriteName = "ScrollbarTrack";
+            track.spriteName = "EmptySprite";
+            track.color = new Color32(24, 34, 37, 255);
+            track.disabledColor = Dim;
             track.size = new Vector2(width, 8f);
             track.relativePosition = new Vector3(0f, 4f);
             track.isInteractive = false;
 
             UISlicedSprite thumb = slider.AddUIComponent<UISlicedSprite>();
-            thumb.spriteName = "ScrollbarThumb";
+            thumb.spriteName = "EmptySprite";
+            thumb.color = Accent;
+            thumb.disabledColor = DimThumb;
             thumb.size = new Vector2(14f, 16f);
             thumb.relativePosition = Vector3.zero;
             slider.thumbObject = thumb;
+            slider.disabledColor = new Color32(255, 255, 255, 255);
 
             slider.eventMouseDown += delegate (UIComponent c, UIMouseEventParameter p) { SliderDragging = true; };
             slider.eventMouseUp += delegate (UIComponent c, UIMouseEventParameter p) { SliderDragging = false; };
@@ -287,10 +444,8 @@ namespace QuayTools
         private static UITextField MakeField(UIComponent parent, float x, float y, Action<float> onMeters, float limitMeters)
         {
             UITextField f = parent.AddUIComponent<UITextField>();
-            f.atlas = UIView.GetAView().defaultAtlas;
-            f.normalBgSprite = "TextFieldPanel";
-            f.hoveredBgSprite = "TextFieldPanelHovered";
-            f.focusedBgSprite = "TextFieldPanel";
+            f.atlas = Flat.Atlas;
+            FlatField(f);
             f.selectionSprite = "EmptySprite";
             f.builtinKeyNavigation = true;
             f.isInteractive = true;
@@ -353,13 +508,25 @@ namespace QuayTools
 
         private static void UpdateToggle(Toggle t)
         {
-            t.Button.text = (t.Value ? "[x]  " : "[  ]  ") + Loc.T(t.TextKey);
-            t.Button.state = t.Value ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
+            t.Button.text = Loc.T(t.TextKey);
+            if (t.Pill == null) return;
+            bool on = t.Value;
+            bool enabled = t.Button.isEnabled;
+            // off: dark like the slider tracks (lighter while nothing is selected); on: green
+            Color32 off = enabled ? new Color32(24, 34, 37, 255) : Dim;
+            t.Pill.color = t.Mixed ? new Color32(220, 55, 55, 255) : on ? new Color32(60, 255, 90, 255) : off;
+            t.Pill.opacity = !enabled && (on || t.Mixed) ? 0.45f : 1f;
+            t.Knob.color = enabled || on || t.Mixed ? new Color32(255, 255, 255, 255) : DimThumb;
+            t.Knob.opacity = !enabled && (on || t.Mixed) ? 0.55f : 1f;
+            t.Pill.disabledColor = t.Pill.color; // a disabled panel would turn white
+            t.Knob.disabledColor = t.Knob.color;
+            t.Knob.relativePosition = new Vector3(on ? SwitchW - SwitchKnob - 3f : 3f, 3f);
         }
 
         private void SetToggle(Toggle t, bool value)
         {
             t.Value = value;
+            t.Mixed = false;
             UpdateToggle(t);
         }
 
@@ -385,14 +552,32 @@ namespace QuayTools
                 b.pressedTextColor = c;
                 b.focusedTextColor = c;
             }
+            NoFocusLook(b);
             t.Button = b;
+
+            // the switch on the right: label on the left, a pill with a knob on the right
+            t.Pill = b.AddUIComponent<UIPanel>();
+            t.Pill.backgroundSprite = Flat.Round;
+            t.Pill.atlas = Flat.Atlas;
+            t.Pill.size = new Vector2(SwitchW, SwitchH);
+            t.Pill.relativePosition = new Vector3(w - SwitchW - 10f, (30f - SwitchH) * 0.5f);
+            t.Pill.isInteractive = false;
+            t.Knob = t.Pill.AddUIComponent<UIPanel>();
+            t.Knob.backgroundSprite = Flat.Round;
+            t.Knob.atlas = Flat.Atlas;
+            t.Knob.color = new Color32(255, 255, 255, 255);
+            t.Knob.size = new Vector2(SwitchKnob, SwitchKnob);
+            t.Knob.isInteractive = false;
+
             b.eventClicked += delegate (UIComponent comp, UIMouseEventParameter e)
             {
                 if (_loading) return;
-                t.Value = !t.Value;
+                t.Value = t.Mixed ? true : !t.Value;
+                t.Mixed = false;
                 UpdateToggle(t);
                 onChange(t.Value);
             };
+            b.eventIsEnabledChanged += delegate (UIComponent comp, bool v) { UpdateToggle(t); };
             UpdateToggle(t);
             return t;
         }
@@ -436,10 +621,8 @@ namespace QuayTools
         private UITextField MakeTextBox(UIComponent parent, float x, float y, float w, string tooltip, Action<string> onChanged)
         {
             UITextField f = parent.AddUIComponent<UITextField>();
-            f.atlas = UIView.GetAView().defaultAtlas;
-            f.normalBgSprite = "TextFieldPanel";
-            f.hoveredBgSprite = "TextFieldPanelHovered";
-            f.focusedBgSprite = "TextFieldPanel";
+            f.atlas = Flat.Atlas;
+            FlatField(f);
             f.selectionSprite = "EmptySprite";
             f.builtinKeyNavigation = true;
             f.isInteractive = true;
@@ -474,15 +657,17 @@ namespace QuayTools
 
             int modeCount = QuayTool.ModeCount;
             _modeButtons = new UIButton[modeCount];
+            _modeIcon = new UITextureSprite[modeCount];
             float btn = ToolsWidth - 20f;
             float btnH = 46f;
 
             // first column: the tools, on a panel of their own
             _toolsPanel = AddUIComponent<UIPanel>();
-            _toolsPanel.size = new Vector2(ToolsWidth - 10f, 8f + modeCount * (btnH + 4f));
+            _toolsPanel.size = new Vector2(ToolsWidth - 10f, ToolsMin);
             _toolsPanel.relativePosition = new Vector3(6f, TopY);
-            _toolsPanel.backgroundSprite = "GenericPanel";
-            _toolsPanel.color = new Color32(18, 24, 30, 255);
+            _toolsPanel.backgroundSprite = Flat.Round;
+            _toolsPanel.atlas = Flat.Atlas;
+            _toolsPanel.color = ColumnBg;
             _toolsPanel.isInteractive = false;
 
             for (int i = 0; i < modeCount; i++)
@@ -493,6 +678,8 @@ namespace QuayTools
                 button.height = btnH;
                 button.relativePosition = new Vector3(5f, 6f + i * (btnH + 4f));
                 StyleButton(button);
+                // a tool has a background; the chosen one loses it: only the icon and the yellow frame stay
+                button.focusedColor = ColumnBg; // the colour of the column: the background disappears
                 button.isEnabled = QuayTool.IsImplemented(mode);
                 button.tooltip = button.isEnabled ? DescriptionFor((QuayTool.Mode)i) : Loc.T(TitleKeys[i]) + Loc.T("soon");
 
@@ -504,6 +691,7 @@ namespace QuayTools
                     sprite.size = new Vector2(32f, 32f);
                     sprite.relativePosition = new Vector3((btn - 32f) * 0.5f, (btnH - 32f) * 0.5f);
                     sprite.isInteractive = false;
+                    _modeIcon[i] = sprite;
                 }
                 else
                 {
@@ -525,14 +713,17 @@ namespace QuayTools
             _status.width = PanelWidth - 24f;
 
             _actionsBack = AddUIComponent<UIPanel>();
-            _actionsBack.backgroundSprite = "GenericPanel";
-            _actionsBack.color = new Color32(34, 44, 54, 255);
+            _actionsBack.backgroundSprite = Flat.Round;
+            _actionsBack.atlas = Flat.Atlas;
+            _actionsBack.color = BoxBg;
             _actionsBack.isInteractive = false;
             _actionsBack.isVisible = false;
 
             BuildNetSection();
             BuildDecalSection();
             BuildLockSection();
+            BuildTemplateSection();
+            BuildSettingsSection();
             BuildPropSection();
             BuildBar();
 
@@ -541,6 +732,8 @@ namespace QuayTools
                 delegate (bool v) { Settings.HideHighlightUi = v; });
             _hideHl.Button.tooltip = Loc.T("hidehl_tip");
             SetToggle(_hideHl, Settings.HideHighlightUi);
+
+            BuildDialog(); // last: it lies over everything
         }
 
         // ---------- network-model line section ----------
@@ -802,11 +995,14 @@ namespace QuayTools
             StyleButton(ui.Header);
 
             // frame of the picture (an empty frame when there is no picture)
+            float picW = ui.Textured ? 118f : 68f;
             UIPanel frame = ui.Header.AddUIComponent<UIPanel>();
-            frame.size = new Vector2(68f, 68f);
+            frame.size = new Vector2(picW, 68f);
             frame.relativePosition = new Vector3(4f, 4f);
-            frame.backgroundSprite = "GenericPanel";
-            frame.color = new Color32(14, 18, 22, 255);
+            frame.backgroundSprite = Flat.Round;
+            frame.atlas = Flat.Atlas;
+            frame.color = FieldBg;
+            frame.disabledColor = Dim; // otherwise a disabled panel turns white
             frame.isInteractive = false;
 
             ui.Icon = ui.Header.AddUIComponent<UISprite>();
@@ -815,13 +1011,23 @@ namespace QuayTools
             ui.Icon.isInteractive = false;
             ui.Icon.isVisible = false;
 
+            if (ui.Textured)
+            {
+                float w = picW - 6f, h = w * 9f / 16f;
+                ui.Pic = ui.Header.AddUIComponent<UITextureSprite>();
+                ui.Pic.size = new Vector2(w, h);
+                ui.Pic.relativePosition = new Vector3(7f, 4f + (68f - h) * 0.5f);
+                ui.Pic.isInteractive = false;
+                ui.Pic.isVisible = false;
+            }
+
             ui.Name = ui.Header.AddUIComponent<UILabel>();
             ui.Name.textScale = 0.8f;
             ui.Name.autoSize = false;
             ui.Name.wordWrap = true;
-            ui.Name.width = PanelWidth - 20f - 90f;
+            ui.Name.width = PanelWidth - 20f - (picW + 22f) - (ui.Textured ? 44f : 0f);
             ui.Name.height = 56f;
-            ui.Name.relativePosition = new Vector3(82f, 10f);
+            ui.Name.relativePosition = new Vector3(picW + 14f, 10f);
             ui.Name.isInteractive = false;
             ui.Name.text = ui.EmptyText;
 
@@ -855,7 +1061,9 @@ namespace QuayTools
             popup.width = PanelWidth - 20f;
             popup.height = ListTop + MaxPopupRows * RowStride + 6f;
             popup.relativePosition = new Vector3(10f, top);
-            popup.backgroundSprite = "MenuPanel2";
+            popup.backgroundSprite = Flat.Round;
+            popup.atlas = Flat.Atlas;
+            popup.color = BoxBg;
             PickerUi wheelPopup = ui;
             popup.eventMouseWheel += delegate (UIComponent c, UIMouseEventParameter e) { OnPopupWheel(wheelPopup, e); };
             popup.isVisible = false;
@@ -882,13 +1090,15 @@ namespace QuayTools
             bar.value = 0f;
 
             UISlicedSprite track = bar.AddUIComponent<UISlicedSprite>();
-            track.spriteName = "ScrollbarTrack";
+            track.spriteName = "EmptySprite";
+            track.color = new Color32(24, 34, 37, 255);
             track.relativePosition = Vector3.zero;
             track.size = bar.size;
             bar.trackObject = track;
 
             UISlicedSprite thumb = track.AddUIComponent<UISlicedSprite>();
-            thumb.spriteName = "ScrollbarThumb";
+            thumb.spriteName = "EmptySprite";
+            thumb.color = Accent;
             thumb.width = 10f;
             bar.thumbObject = thumb;
 
@@ -915,8 +1125,17 @@ namespace QuayTools
             row.textScale = 0.8f;
             row.textHorizontalAlignment = UIHorizontalAlignment.Left;
             row.textVerticalAlignment = UIVerticalAlignment.Middle;
-            row.textPadding = new RectOffset(46, 0, 0, 0);
+            row.textPadding = new RectOffset(ui.Textured ? 68 : 46, 0, 0, 0);
             r.Button = row;
+
+            if (ui.Textured)
+            {
+                r.Tex = row.AddUIComponent<UITextureSprite>();
+                r.Tex.size = new Vector2(52f, 29f);
+                r.Tex.relativePosition = new Vector3(8f, (RowHeight - 29f) * 0.5f);
+                r.Tex.isInteractive = false;
+                r.Tex.isVisible = false;
+            }
 
             r.Icon = row.AddUIComponent<UISprite>();
             r.Icon.size = new Vector2(30f, 30f);
@@ -1025,6 +1244,12 @@ namespace QuayTools
                     r.Icon.spriteName = it.Thumb;
                 }
                 r.Icon.isVisible = icon;
+                if (r.Tex != null)
+                {
+                    bool pic = it != null && it.Tex != null;
+                    r.Tex.isVisible = pic;
+                    if (pic) r.Tex.texture = it.Tex;
+                }
 
                 Texture2D star = it != null && it.Fav ? _starOn : _starOff;
                 r.StarButton.isVisible = it != null && !string.IsNullOrEmpty(it.Key) && star != null;
@@ -1112,10 +1337,18 @@ namespace QuayTools
             {
                 ui.Name.text = ui.EmptyText;
                 ui.Icon.isVisible = false;
+                if (ui.Pic != null) ui.Pic.isVisible = false;
                 return;
             }
 
             ui.Name.text = item.Title.Length > 60 ? item.Title.Substring(0, 59) + "…" : item.Title;
+
+            if (ui.Pic != null)
+            {
+                bool pic = item.Tex != null;
+                ui.Pic.isVisible = pic;
+                if (pic) ui.Pic.texture = item.Tex;
+            }
 
             if (item.Atlas != null && !string.IsNullOrEmpty(item.Thumb))
             {
@@ -1170,9 +1403,9 @@ namespace QuayTools
                 case QuayTool.Mode.AddNetwork: LoadNetFromSelection(); break;
                 case QuayTool.Mode.Decal: LoadDecalFromSelection(); break;
                 case QuayTool.Mode.PropLine: LoadPropFromSelection(); break;
-                case QuayTool.Mode.Lock:
-                case QuayTool.Mode.RemovePedestrian:
-                case QuayTool.Mode.HideProps: LoadLockFromSelection(); break;
+                case QuayTool.Mode.Segment: LoadLockFromSelection(); break;
+                case QuayTool.Mode.Templates: UpdateTemplateUi(); break;
+                case QuayTool.Mode.Settings: LoadSettingsUi(); break;
             }
         }
 
@@ -1233,14 +1466,23 @@ namespace QuayTools
             {
                 if (!_modeButtons[i].isEnabled) continue;
                 _modeButtons[i].state = (int)current == i ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
+                Flat.Keep(_modeButtons[i], (int)current == i);
             }
 
             bool addMode = current == QuayTool.Mode.AddNetwork;
             bool decalMode = current == QuayTool.Mode.Decal;
             bool propMode = current == QuayTool.Mode.PropLine;
-            bool lockMode = current == QuayTool.Mode.Lock || current == QuayTool.Mode.RemovePedestrian || current == QuayTool.Mode.HideProps;
-            bool select = addMode || decalMode || propMode || lockMode;
+            bool lockMode = current == QuayTool.Mode.Segment;
+            bool tplMode = current == QuayTool.Mode.Templates;
+            bool setMode = current == QuayTool.Mode.Settings;
+            bool select = addMode || decalMode || propMode || lockMode || tplMode || setMode;
 
+            if (tplMode && !_tpl.isVisible) ReloadTemplates(null);
+            _tpl.isVisible = tplMode;
+            _set.isVisible = setMode;
+            if (!setMode && _help != null) _help.isVisible = false;
+            if (!tplMode) _tplEditOpen = false;
+            if (_dlg != null) _dlg.isVisible = false;
             _net.isVisible = addMode;
             _decal.isVisible = decalMode;
             _prop.isVisible = propMode;
@@ -1248,6 +1490,7 @@ namespace QuayTools
             _bar.isVisible = select;
             ClosePopup();
             if (select) LoadFromSelection();
+            UpdateTemplateEdit();
             UpdateBar();
             UpdateHeight();
         }
@@ -1255,9 +1498,6 @@ namespace QuayTools
         private static string DescriptionFor(QuayTool.Mode current)
         {
             string description = Loc.T(TitleKeys[(int)current]) + ": " + QuayTool.HintFor(current);
-            if (current == QuayTool.Mode.Lock) description += "\n\n" + Loc.T("lock_note");
-            else if (current == QuayTool.Mode.RemovePedestrian) description += "\n\n" + Loc.T("nop_note");
-            else if (current == QuayTool.Mode.HideProps) description += "\n\n" + Loc.T("hp_note");
             return WrapText(description, 64);
         }
 
@@ -1292,8 +1532,7 @@ namespace QuayTools
 
         private static bool SelectMode(QuayTool.Mode m)
         {
-            return m == QuayTool.Mode.AddNetwork || m == QuayTool.Mode.Decal || m == QuayTool.Mode.PropLine ||
-                   m == QuayTool.Mode.Lock || m == QuayTool.Mode.RemovePedestrian || m == QuayTool.Mode.HideProps;
+            return m != QuayTool.Mode.None;
         }
 
         private static bool SliderMode(QuayTool.Mode m)
@@ -1303,27 +1542,27 @@ namespace QuayTools
 
         private float LeftOf(QuayTool.Mode m)
         {
-            return m == QuayTool.Mode.AddNetwork ? _netLeft : m == QuayTool.Mode.Decal ? _decalLeft : m == QuayTool.Mode.PropLine ? _propLeft : _lockHeight;
+            return m == QuayTool.Mode.AddNetwork ? _netLeft : m == QuayTool.Mode.Decal ? _decalLeft : m == QuayTool.Mode.PropLine ? _propLeft : m == QuayTool.Mode.Templates ? _tplHeight : m == QuayTool.Mode.Settings ? _setHeight : _lockHeight;
         }
 
         private float RightOf(QuayTool.Mode m)
         {
-            return m == QuayTool.Mode.AddNetwork ? _netHeight : m == QuayTool.Mode.Decal ? _decalHeightFull : m == QuayTool.Mode.PropLine ? _propHeightFull : _lockHeight;
+            return m == QuayTool.Mode.AddNetwork ? _netHeight : m == QuayTool.Mode.Decal ? _decalHeightFull : m == QuayTool.Mode.PropLine ? _propHeightFull : m == QuayTool.Mode.Templates ? _tplHeight : m == QuayTool.Mode.Settings ? _setHeight : _lockHeight;
         }
 
         private const float BarGap = 2f, BarH = 38f, StatusH = 22f;
 
-        /// <summary>One window height for the tools with values (the largest of them); the other tools take what they need.</summary>
+        /// <summary>One window height for all the tools (the largest of them), so that the window does not jump when a tool is chosen.</summary>
         private float SliderToolsHeight()
         {
             float best = 0f;
             for (int i = 0; i < QuayTool.ModeCount; i++)
             {
                 QuayTool.Mode m = (QuayTool.Mode)i;
-                if (!SliderMode(m)) continue;
                 best = Mathf.Max(best, TopY + LeftOf(m) + BarGap + BarH + 6f + StatusH + 10f);
                 best = Mathf.Max(best, TopY + RightOf(m) + 52f);
             }
+            best = Mathf.Max(best, TopY + _tplEditHeight + 10f);
             return best;
         }
 
@@ -1342,32 +1581,38 @@ namespace QuayTools
             bool decalMode = _decal != null && _decal.isVisible;
             bool propMode = _prop != null && _prop.isVisible;
             bool lockMode = _lock != null && _lock.isVisible;
-            bool select = addMode || decalMode || propMode || lockMode;
+            bool tplMode = _tpl != null && _tpl.isVisible;
+            bool setMode = _set != null && _set.isVisible;
+            bool select = addMode || decalMode || propMode || lockMode || tplMode || setMode;
             bool sliders = addMode || decalMode || propMode;
             bool hasStatus = _status != null && !string.IsNullOrEmpty(_status.text);
 
-            int columns = sliders ? 2 : select ? 1 : (mode == QuayTool.Mode.Invert && hasStatus) ? 1 : 0;
+            bool tplEdit = tplMode && _tplEdit != null && _tplEdit.isVisible;
+            bool setHelp = setMode && _help != null && _help.isVisible;
+            int columns = sliders || tplEdit || setHelp ? 2 : select ? 1 : 0;
             SetColumns(columns);
 
-            float section = addMode ? _netHeight : decalMode ? _decalHeight : propMode ? _propHeight : lockMode ? _lockHeight : 0f;
+            float section = addMode ? _netHeight : decalMode ? _decalHeight : propMode ? _propHeight : tplMode ? _tplHeight : setMode ? _setHeight : lockMode ? _lockHeight : 0f;
             float left = addMode ? _netLeft : decalMode ? _decalLeft : propMode ? _propLeft : section;
-            float act = addMode ? _netAct : decalMode ? _decalAct : propMode ? _propAct : -1f;
+            float act = addMode ? _netAct : decalMode ? _decalAct : propMode ? _propAct : setMode ? _setAct : -1f;
 
             if (select)
             {
-                UIPanel active = addMode ? _net : decalMode ? _decal : propMode ? _prop : _lock;
+                UIPanel active = addMode ? _net : decalMode ? _decal : propMode ? _prop : tplMode ? _tpl : setMode ? _set : _lock;
                 active.height = section;
             }
 
-            float need = TopY + _toolsPanel.height + 8f;
+            float need = Mathf.Max(TopY + ToolsMin + 8f, SliderToolsHeight());
             if (select) need = Mathf.Max(need, TopY + left + BarGap + BarH + 6f + StatusH + 10f);
-            if (sliders) need = Mathf.Max(need, SliderToolsHeight());
             if (select && _openPopup != null)
             {
                 float popupBottom = TopY + _openPopup.Popup.relativePosition.y + _openPopup.Popup.height + 10f;
                 need = Mathf.Max(need, popupBottom);
             }
             height = need;
+            _toolsPanel.height = height - TopY - 8f;
+            PlaceToolButtons();
+            FitHelp();
 
             float x = ToolsWidth;
             _hideHl.Button.isVisible = sliders;
@@ -1386,7 +1631,7 @@ namespace QuayTools
             float delta = barY - oldBarY;
             _bar.relativePosition = new Vector3(x, barY);
 
-            UIButton first = addMode ? _netRemove : decalMode ? _dRemove : propMode ? _propRemove : null;
+            UIButton first = addMode ? _netRemove : decalMode ? _dRemove : propMode ? _propRemove : setMode ? _setClear : null;
             UIButton second = addMode ? _netClear : decalMode ? _dClear : propMode ? _propClear : null;
             MoveDown(first, delta);
             MoveDown(second, delta);
@@ -1401,6 +1646,18 @@ namespace QuayTools
             // the highlight switch: bottom of the third column, only where there are sliders
             _hideHl.Button.relativePosition = new Vector3(x + PanelWidth + 10f, height - 40f);
             if (_openPopup == null) _hideHl.Button.BringToFront();
+        }
+
+        /// <summary>The tools are stacked from the top; the last one (Templates) sits at the bottom of the column.</summary>
+        private void PlaceToolButtons()
+        {
+            if (_modeButtons == null) return;
+            for (int i = 0; i < _modeButtons.Length; i++)
+            {
+                bool last = i == _modeButtons.Length - 1;
+                float y = last ? _toolsPanel.height - ToolBtnH - 6f : 6f + i * (ToolBtnH + 4f);
+                _modeButtons[i].relativePosition = new Vector3(5f, y);
+            }
         }
 
         private readonly Dictionary<UIComponent, float> _baseY = new Dictionary<UIComponent, float>();
@@ -1574,7 +1831,8 @@ namespace QuayTools
             _dSwatch = _decalRest.AddUIComponent<UIPanel>();
             _dSwatch.size = new Vector2(40f, 18f);
             _dSwatch.relativePosition = new Vector3(PanelWidth - 140f, yr - 1f);
-            _dSwatch.backgroundSprite = "GenericPanel";
+            _dSwatch.backgroundSprite = Flat.Round;
+            _dSwatch.atlas = Flat.Atlas;
             _dSwatch.isInteractive = false;
             _dHex = MakeHexField(_decalRest, PanelWidth - 94f, yr - 1f);
             yr += 24f;
@@ -1794,10 +2052,8 @@ namespace QuayTools
         private UITextField MakeHexField(UIComponent parent, float x, float y)
         {
             UITextField f = parent.AddUIComponent<UITextField>();
-            f.atlas = UIView.GetAView().defaultAtlas;
-            f.normalBgSprite = "TextFieldPanel";
-            f.hoveredBgSprite = "TextFieldPanelHovered";
-            f.focusedBgSprite = "TextFieldPanel";
+            f.atlas = Flat.Atlas;
+            FlatField(f);
             f.selectionSprite = "EmptySprite";
             f.builtinKeyNavigation = true;
             f.isInteractive = true;
@@ -1934,6 +2190,8 @@ namespace QuayTools
                 // the button of the way the current path is drawn stays pressed (the way cannot be changed afterwards)
                 _dAdd.state = has && !d.Strip ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
                 _dAddPlane.state = has && d.Strip ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
+                Flat.Keep(_dAdd, has && !d.Strip);
+                Flat.Keep(_dAddPlane, has && d.Strip);
                 _decalPrev.isEnabled = has && _decalCount > 1;
                 _decalNext.isEnabled = has && _decalCount > 1;
                 _dRemove.isEnabled = has;
@@ -1965,40 +2223,59 @@ namespace QuayTools
 
             float y = 0f;
             _lockSel = MakeLabel(_lock, string.Empty, 12f, y, 0.85f);
-            y += 26f;
+            y += 30f;
 
-            _lockState = MakeLabel(_lock, string.Empty, 12f, y, 0.75f);
-            y += 26f;
-
-            _lockBtn = _lock.AddUIComponent<UIButton>();
-            _lockBtn.width = PanelWidth - 20f;
-            _lockBtn.height = 32f;
-            _lockBtn.relativePosition = new Vector3(10f, y);
-            StyleButton(_lockBtn);
-            _lockBtn.text = Loc.T("lock_do");
-            _lockBtn.textScale = 0.85f;
-            _lockBtn.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            // Invert: one button with a green check; the same mechanics as the former Invert tool
+            _flipBtn = _lock.AddUIComponent<UIButton>();
+            _flipBtn.width = PanelWidth - 20f;
+            _flipBtn.height = 34f;
+            _flipBtn.relativePosition = new Vector3(10f, y);
+            StyleButton(_flipBtn);
+            _flipBtn.textScale = 0.8f;
+            _flipBtn.textHorizontalAlignment = UIHorizontalAlignment.Left;
+            _flipBtn.textPadding = new RectOffset(52, 0, 0, 0);
+            _flipBtn.text = Loc.T("seg_invert");
+            _flipBtn.tooltip = Loc.T("seg_invert_tip");
+            AddRowIcon(_flipBtn, "Invert.png", 12f);
+            _flipBtn.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
             {
                 QuayTool tool = QuayTool.Instance;
-                if (tool != null) tool.SetLock(true);
+                if (tool != null) tool.FlipSelected();
             };
-            y += BtnStride;
+            y += 42f;
 
-            _unlockBtn = _lock.AddUIComponent<UIButton>();
-            _unlockBtn.width = PanelWidth - 20f;
-            _unlockBtn.height = 32f;
-            _unlockBtn.relativePosition = new Vector3(10f, y);
-            StyleButton(_unlockBtn);
-            _unlockBtn.text = Loc.T("lock_undo");
-            _unlockBtn.textScale = 0.85f;
-            _unlockBtn.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
-            {
-                QuayTool tool = QuayTool.Instance;
-                if (tool != null) tool.SetLock(false);
-            };
-            y += BtnStride;
+            _tgLock = MakeSegmentToggle(y, "seg_lock", "Lock.png", "seg_lock_tip", "lock"); y += 42f;
+            _tgNop = MakeSegmentToggle(y, "seg_nop", "NoPedestrian.png", "seg_nop_tip", "nop"); y += 42f;
+            _tgHide = MakeSegmentToggle(y, "seg_hide", "HideProps.png", "seg_hide_tip", "hp"); y += 42f;
 
             _lockHeight = y;
+        }
+
+        private static void AddRowIcon(UIButton row, string file, float x)
+        {
+            Texture2D icon = ModPaths.LoadIcon(file);
+            if (icon == null) return;
+            UITextureSprite sprite = row.AddUIComponent<UITextureSprite>();
+            sprite.texture = icon;
+            sprite.size = new Vector2(26f, 26f);
+            sprite.relativePosition = new Vector3(x, (row.height - 26f) * 0.5f);
+            sprite.isInteractive = false;
+        }
+
+        private Toggle MakeSegmentToggle(float y, string textKey, string iconFile, string tipKey, string kind)
+        {
+            Toggle t = MakeToggle(_lock, 10f, y, PanelWidth - 20f, textKey, null, delegate (bool v)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null) tool.SetSegmentFlag(kind, v);
+            });
+            t.Button.height = 34f;
+            t.Button.textPadding = new RectOffset(48, 0, 0, 0);
+            t.Button.textScale = 0.7f;
+            t.Pill.relativePosition = new Vector3(PanelWidth - 20f - SwitchW - 10f, (34f - SwitchH) * 0.5f);
+            t.Button.tooltip = Loc.T(tipKey);
+            AddRowIcon(t.Button, iconFile, 12f);
+            return t;
         }
 
         private void LoadLockFromSelection()
@@ -2007,23 +2284,770 @@ namespace QuayTools
 
             QuayTool tool = QuayTool.Instance;
             int count = tool == null ? 0 : tool.Selection.Count;
-            bool peds = tool != null && tool.CurrentMode == QuayTool.Mode.RemovePedestrian;
-            bool hide = tool != null && tool.CurrentMode == QuayTool.Mode.HideProps;
-            string kind = peds ? "nop" : hide ? "hp" : "lock";
-            int locked = 0;
+            int locked = 0, peds = 0, hidden = 0;
             for (int i = 0; i < count; i++)
             {
                 ushort seg = tool.Selection[i];
-                if (peds ? PedStore.Has(seg) : hide ? HideStore.Has(seg) : LockStore.IsLocked(seg)) locked++;
+                if (LockStore.IsLocked(seg)) locked++;
+                if (PedStore.Has(seg)) peds++;
+                if (HideStore.Has(seg)) hidden++;
             }
 
-            _lockBtn.text = Loc.T(kind + "_do");
-            _unlockBtn.text = Loc.T(kind + "_undo");
             _lockSel.text = Loc.T("selected") + count;
-            _lockState.text = Loc.F(kind + "_state", locked, count);
-            _lockBtn.isEnabled = count > 0 && locked < count;
-            _unlockBtn.isEnabled = locked > 0;
+            _flipBtn.isEnabled = count > 0;
+            _tgLock.Button.isEnabled = count > 0;
+            _tgNop.Button.isEnabled = count > 0;
+            _tgHide.Button.isEnabled = count > 0;
+            SetToggle(_tgLock, count > 0 && locked == count);
+            _tgLock.Mixed = locked > 0 && locked < count;
+            UpdateToggle(_tgLock);
+            SetToggle(_tgNop, count > 0 && peds == count);
+            _tgNop.Mixed = peds > 0 && peds < count;
+            UpdateToggle(_tgNop);
+            SetToggle(_tgHide, count > 0 && hidden == count);
+            _tgHide.Mixed = hidden > 0 && hidden < count;
+            UpdateToggle(_tgHide);
             if (_resetBtn != null) _resetBtn.isEnabled = false;
+        }
+
+        // ---------- settings section ----------
+
+        private void BuildSettingsSection()
+        {
+            _set = AddUIComponent<UIPanel>();
+            _set.width = PanelWidth;
+            _set.relativePosition = new Vector3(ToolsWidth, TopY);
+            _set.isVisible = false;
+
+            float y = 4f;
+            _setFlip = MakeToggle(_set, 10f, y, PanelWidth - 20f, "set_quickflip", null, delegate (bool v) { Settings.QuickFlipEnabled = v; });
+            _setFlip.Button.tooltip = WrapText(Loc.T("opt_quickflip"), 64);
+            y += ToggleStride;
+            _setShadows = MakeToggle(_set, 10f, y, PanelWidth - 20f, "set_shadows", null, delegate (bool v) { Settings.DecalReceiveShadows = v; });
+            _setShadows.Button.tooltip = WrapText(Loc.T("opt_shadows"), 64);
+            y += ToggleStride;
+            _setMark = MakeToggle(_set, 10f, y, PanelWidth - 20f, "set_mark", null, delegate (bool v) { Settings.MarkEdited = v; });
+            _setMark.Button.tooltip = WrapText(Loc.T("opt_mark"), 64);
+            y += ToggleStride + 6f;
+
+            // size of the floating icons: three buttons
+            MakeLabel(_set, Loc.T("set_icon"), 12f, y, 0.8f);
+            y += 22f;
+            _setIcon = new UIButton[3];
+            string[] tips = { "opt_icon1", "opt_icon2", "opt_icon3" };
+            float w = (PanelWidth - 20f - 12f) / 3f;
+            for (int i = 0; i < 3; i++)
+            {
+                int size = i + 1;
+                UIButton b = _set.AddUIComponent<UIButton>();
+                b.size = new Vector2(w, 30f);
+                b.relativePosition = new Vector3(10f + i * (w + 6f), y);
+                StyleButton(b);
+                b.textScale = 0.8f;
+                b.text = size.ToString();
+                b.tooltip = Loc.T(tips[i]);
+                b.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+                {
+                    Settings.MarkIconSize = size;
+                    LoadSettingsUi();
+                };
+                _setIcon[i] = b;
+            }
+            y += 40f;
+
+            _setHelp = _set.AddUIComponent<UIButton>();
+            _setHelp.width = PanelWidth - 20f;
+            _setHelp.height = 34f;
+            _setHelp.relativePosition = new Vector3(10f, y);
+            StyleButton(_setHelp);
+            _setHelp.textScale = 0.8f;
+            _setHelp.text = Loc.T("set_help");
+            _setHelp.tooltip = Loc.T("set_help_tip");
+            _setHelp.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                _help.isVisible = !_help.isVisible;
+                if (_help.isVisible) FillHelp();
+                UpdateHeight();
+            };
+            y += 44f;
+
+            BuildHelp();
+
+            // the button that clears everything sits at the bottom, above the undo / redo / reset bar
+            y += 10f;
+            _setAct = y;
+            _setClear = _set.AddUIComponent<UIButton>();
+            _setClear.width = PanelWidth - 20f;
+            _setClear.height = 34f;
+            _setClear.relativePosition = new Vector3(10f, y);
+            StyleButton(_setClear);
+            _setClear.textScale = 0.8f;
+            _setClear.text = Loc.T("set_clear");
+            _setClear.tooltip = WrapText(Loc.T("set_clear_tip"), 64);
+            MakeRed(_setClear);
+            _setClear.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                Ask(Loc.T("clear_all_ask"), delegate
+                {
+                    QuayTool tool = QuayTool.Instance;
+                    if (tool != null) tool.ClearAllModifications();
+                }, false);
+            };
+            y += 44f;
+
+            _setHeight = y;
+        }
+
+        /// <summary>The third column of the settings: how to control the mod.</summary>
+        private void BuildHelp()
+        {
+            _help = AddUIComponent<UIPanel>();
+            _help.width = PanelWidth;
+            _help.relativePosition = new Vector3(ToolsWidth + PanelWidth, TopY);
+            _help.isVisible = false;
+
+            MakeLabel(_help, Loc.T("help_title"), 12f, 4f, 0.95f);
+
+            // the text lives in a scrollable list: headings and bulleted lines
+            _helpScroll = _help.AddUIComponent<UIScrollablePanel>();
+            _helpScroll.relativePosition = new Vector3(8f, 34f);
+            _helpScroll.size = new Vector2(PanelWidth - 16f - 14f, 400f);
+            _helpScroll.autoLayout = true;
+            _helpScroll.autoLayoutDirection = LayoutDirection.Vertical;
+            _helpScroll.autoLayoutPadding = new RectOffset(0, 0, 0, 3);
+            _helpScroll.clipChildren = true;
+            _helpScroll.scrollWheelDirection = UIOrientation.Vertical;
+            _helpScroll.builtinKeyNavigation = false;
+
+            _helpBar = _help.AddUIComponent<UIScrollbar>();
+            _helpBar.width = 10f;
+            _helpBar.orientation = UIOrientation.Vertical;
+            _helpBar.pivot = UIPivotPoint.TopLeft;
+            _helpBar.minValue = 0f;
+            _helpBar.incrementAmount = 40f;
+            UISlicedSprite track = _helpBar.AddUIComponent<UISlicedSprite>();
+            track.spriteName = "EmptySprite";
+            track.color = new Color32(24, 34, 37, 255);
+            track.relativePosition = Vector3.zero;
+            track.size = new Vector2(10f, 400f);
+            _helpBar.trackObject = track;
+            _helpTrack = track;
+            UISlicedSprite thumb = track.AddUIComponent<UISlicedSprite>();
+            thumb.spriteName = "EmptySprite";
+            thumb.color = Accent;
+            thumb.width = 10f;
+            _helpBar.thumbObject = thumb;
+            _helpScroll.verticalScrollbar = _helpBar;
+
+            FillHelp();
+            _help.height = 560f;
+        }
+
+        /// <summary>Fills the help list (again each time it is opened: the hotkeys may have been changed).</summary>
+        private void FillHelp()
+        {
+            List<UIComponent> old = new List<UIComponent>(_helpScroll.components);
+            for (int i = 0; i < old.Count; i++) Destroy(old[i].gameObject);
+            string[] lines = Settings.HelpText().Split('\n');
+            bool heading = true;
+            float w = _helpScroll.width;
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].Trim();
+                if (line.Length == 0)
+                {
+                    heading = true;
+                    continue;
+                }
+                UILabel l = _helpScroll.AddUIComponent<UILabel>();
+                l.autoSize = false;
+                l.autoHeight = true;
+                l.wordWrap = true;
+                l.isInteractive = false;
+                if (heading)
+                {
+                    l.width = w;
+                    l.text = line;
+                    l.textScale = 0.9f;
+                    l.textColor = Accent;
+                    l.padding = new RectOffset(0, 0, 10, 2);
+                    heading = false;
+                }
+                else
+                {
+                    l.width = w;
+                    l.text = line;
+                    l.textScale = 0.78f;
+                    l.textColor = TextMain;
+                    l.padding = new RectOffset(14, 0, 0, 3);
+                    UILabel dot = l.AddUIComponent<UILabel>();
+                    dot.text = "\u2022";
+                    dot.textScale = 0.8f;
+                    dot.textColor = Accent;
+                    dot.isInteractive = false;
+                    dot.relativePosition = new Vector3(3f, 0f);
+                }
+            }
+        }
+
+        /// <summary>Fits the help list to the window height.</summary>
+        private void FitHelp()
+        {
+            if (_help == null || _helpScroll == null) return;
+            float h = Mathf.Max(100f, height - TopY - 8f - 34f - 10f);
+            _help.height = h + 44f;
+            _helpScroll.height = h;
+            _helpTrack.height = h;
+            _helpBar.height = h;
+            _helpBar.relativePosition = new Vector3(PanelWidth - 18f, 34f);
+        }
+
+        private void LoadSettingsUi()
+        {
+            if (_set == null) return;
+            SetToggle(_setFlip, Settings.QuickFlipEnabled);
+            SetToggle(_setShadows, Settings.DecalReceiveShadows);
+            SetToggle(_setMark, Settings.MarkEdited);
+            for (int i = 0; i < 3; i++)
+            {
+                _setIcon[i].state = Settings.MarkIconSize == i + 1 ? UIButton.ButtonState.Focused : UIButton.ButtonState.Normal;
+                Flat.Keep(_setIcon[i], Settings.MarkIconSize == i + 1);
+            }
+            if (_resetBtn != null) _resetBtn.isEnabled = false;
+        }
+
+        // ---------- templates section ----------
+
+        private void BuildTemplateSection()
+        {
+            _tpl = AddUIComponent<UIPanel>();
+            _tpl.width = PanelWidth;
+            _tpl.relativePosition = new Vector3(ToolsWidth, TopY);
+            _tpl.isVisible = false;
+
+            float y = 0f;
+            _tplSel = MakeLabel(_tpl, string.Empty, 12f, y, 0.85f);
+            y += 30f;
+
+            _tplName = MakeTextBox(_tpl, 10f, y, PanelWidth - 20f, Loc.T("tpl_name_tip"), delegate (string text)
+            {
+                string clean = TemplateStore.CleanName(text);
+                if (clean != text) _tplName.text = clean; // forbidden characters are dropped, the length is limited
+            });
+            y += 28f;
+
+            _tplSave = _tpl.AddUIComponent<UIButton>();
+            _tplSave.width = PanelWidth - 20f;
+            _tplSave.height = 34f;
+            _tplSave.relativePosition = new Vector3(10f, y);
+            StyleButton(_tplSave);
+            _tplSave.textScale = 0.8f;
+            _tplSave.text = Loc.T("tpl_save");
+            _tplSave.tooltip = Loc.T("tpl_save_tip");
+            _tplSave.eventClicked += delegate (UIComponent c, UIMouseEventParameter p) { OnTemplateSave(); };
+            y += 46f;
+
+            MakeLabel(_tpl, Loc.T("tpl_list"), 12f, y, 0.85f);
+            y += 20f;
+
+            _tplUi = new PickerUi();
+            _tplUi.Parent = _tpl;
+            _tplUi.EmptyText = Loc.T("tpl_pick");
+            _tplUi.Kind = Favorites.Fences; // not used: the templates have no favourites (no keys)
+            _tplUi.ShowEmpty = false;
+            _tplUi.Textured = true;
+            _tplUi.GetItems = delegate (string text)
+            {
+                List<PickItem> items = new List<PickItem>();
+                for (int i = 0; i < _templates.Count; i++)
+                {
+                    if (!Matches(text, _templates[i].Name, null)) continue;
+                    items.Add(TemplateItem(_templates[i]));
+                }
+                return items;
+            };
+            _tplUi.OnPicked = delegate (PickItem item)
+            {
+                _tplPicked = item == null ? null : item.Tag as QuayTemplate;
+                _tplLineOffset = 0;
+                UpdateTemplateUi();
+            };
+            BuildHeader(_tpl, _tplUi, y);
+
+            // the pencil on the right of the picked template opens its settings (the third column)
+            _tplPencil = _tpl.AddUIComponent<UIButton>();
+            _tplPencil.size = new Vector2(36f, 36f);
+            _tplPencil.relativePosition = new Vector3(PanelWidth - 10f - 42f, y + 20f);
+            StyleButton(_tplPencil);
+            _tplPencil.color = FieldBg; // a darker background sets the pencil apart from the row
+            _tplPencil.hoveredColor = FieldBg;
+            _tplPencil.focusedColor = FieldBg;
+            _tplPencil.disabledColor = FieldBg;
+            _tplPencil.tooltip = Loc.T("tpl_edit_tip");
+            AddRowIcon(_tplPencil, "Pencil.png", 5f);
+            _tplPencil.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                _tplEditOpen = !_tplEditOpen;
+                _tplEditFor = null;
+                UpdateTemplateUi();
+            };
+            y += 84f;
+
+            _tplInfo = MakeLabel(_tpl, string.Empty, 12f, y, 0.7f);
+            _tplInfo.autoSize = false;
+            _tplInfo.wordWrap = true;
+            _tplInfo.width = PanelWidth - 24f;
+            _tplInfo.height = 34f;
+            y += 38f;
+
+            _tplApply = _tpl.AddUIComponent<UIButton>();
+            _tplApply.width = PanelWidth - 20f;
+            _tplApply.height = 34f;
+            _tplApply.relativePosition = new Vector3(10f, y);
+            StyleButton(_tplApply);
+            _tplApply.textScale = 0.8f;
+            _tplApply.text = Loc.T("tpl_apply");
+            _tplApply.tooltip = Loc.T("tpl_apply_tip");
+            _tplApply.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null && _tplPicked != null) tool.ApplyTemplate(_tplPicked);
+            };
+            y += 42f;
+
+            _tplHeight = y;
+
+            BuildPopup(_tplUi); // last: the list is drawn above the controls below its button
+            BuildTemplateEdit();
+        }
+
+        private static PickItem TemplateItem(QuayTemplate t)
+        {
+            PickItem it = new PickItem();
+            it.Title = t.Name;
+            it.Tex = t.Thumb;
+            it.Tag = t;
+            return it;
+        }
+
+        /// <summary>The third column: name, picture, copy / delete, the lines of the picked template.</summary>
+        private void BuildTemplateEdit()
+        {
+            _tplEdit = AddUIComponent<UIPanel>();
+            _tplEdit.width = PanelWidth;
+            _tplEdit.relativePosition = new Vector3(ToolsWidth + PanelWidth, TopY);
+            _tplEdit.isVisible = false;
+
+            float y = 0f;
+            MakeLabel(_tplEdit, Loc.T("tpl_edit_title"), 12f, y, 0.9f);
+            y += 28f;
+
+            float renameW = 104f;
+            _tplEditName = MakeTextBox(_tplEdit, 10f, y + 4f, PanelWidth - 30f - renameW, Loc.T("tpl_name_tip"), delegate (string text)
+            {
+                string clean = TemplateStore.CleanName(text);
+                if (clean != text) _tplEditName.text = clean;
+            });
+            _tplEditRename = MakeSmallButton(_tplEdit, PanelWidth - 10f - renameW, y, renameW, Loc.T("tpl_rename"), OnTemplateRename);
+            y += 38f;
+
+            // the picture (16:9)
+            float picW = PanelWidth - 20f, picH = picW * 9f / 16f;
+            UIPanel frame = _tplEdit.AddUIComponent<UIPanel>();
+            frame.size = new Vector2(picW, picH);
+            frame.relativePosition = new Vector3(10f, y);
+            frame.backgroundSprite = Flat.Round;
+            frame.atlas = Flat.Atlas;
+            frame.color = FieldBg;
+            frame.disabledColor = Dim; // otherwise a disabled panel turns white
+            frame.isInteractive = false;
+            _tplEditPic = _tplEdit.AddUIComponent<UITextureSprite>();
+            _tplEditPic.size = new Vector2(picW - 4f, picH - 4f);
+            _tplEditPic.relativePosition = new Vector3(12f, y + 2f);
+            _tplEditPic.isInteractive = false;
+            _tplEditNoPic = MakeLabel(_tplEdit, Loc.T("tpl_nopic"), 20f, y + picH * 0.5f - 8f, 0.8f);
+            y += picH + 8f;
+
+            _tplEditShot = MakeSmallButton(_tplEdit, 10f, y, PanelWidth - 20f, Loc.T("tpl_shot"), OnTemplateShot);
+            _tplEditShot.height = 34f;
+            _tplEditShot.tooltip = Loc.T("tpl_shot_tip");
+            y += 42f;
+
+            float half = (PanelWidth - 26f) * 0.5f;
+            _tplEditDup = MakeSmallButton(_tplEdit, 10f, y, half, Loc.T("tpl_dup"), OnTemplateDuplicate);
+            _tplEditDup.height = 34f;
+            _tplEditDelete = MakeSmallButton(_tplEdit, 16f + half, y, half, Loc.T("tpl_delete"), OnTemplateDelete);
+            _tplEditDelete.height = 34f;
+            _tplEditDelete.tooltip = Loc.T("tpl_delete_tip");
+            MakeRed(_tplEditDelete);
+            y += 42f;
+
+            _tplEditFolder = MakeSmallButton(_tplEdit, 10f, y, PanelWidth - 20f, Loc.T("tpl_folder"), delegate { TemplateStore.OpenFolder(); });
+            _tplEditFolder.height = 34f;
+            _tplEditFolder.tooltip = Loc.T("tpl_folder_tip");
+            y += 46f;
+
+            MakeLabel(_tplEdit, Loc.T("tpl_lines_title"), 12f, y, 0.85f);
+            y += 22f;
+
+            _tplLineBtn = new UIButton[TplLineRows];
+            _tplLineDel = new UIButton[TplLineRows];
+            for (int i = 0; i < TplLineRows; i++)
+            {
+                int row = i;
+                UIButton b = _tplEdit.AddUIComponent<UIButton>();
+                b.width = PanelWidth - 20f - 34f;
+                b.height = 28f;
+                b.relativePosition = new Vector3(10f, y + i * 30f);
+                StyleButton(b);
+                b.textScale = 0.75f;
+                b.textHorizontalAlignment = UIHorizontalAlignment.Left;
+                b.textPadding = new RectOffset(8, 0, 0, 0);
+                b.isInteractive = false;
+                _tplLineBtn[i] = b;
+
+                UIButton d = _tplEdit.AddUIComponent<UIButton>();
+                d.size = new Vector2(28f, 28f);
+                d.relativePosition = new Vector3(PanelWidth - 10f - 28f, y + i * 30f);
+                StyleButton(d);
+                d.text = "X";
+                d.textScale = 0.8f;
+                d.tooltip = Loc.T("tpl_line_del");
+                MakeRed(d);
+                d.eventClicked += delegate (UIComponent c, UIMouseEventParameter p) { OnTemplateLineDelete(row); };
+                _tplLineDel[i] = d;
+            }
+            y += TplLineRows * 30f + 2f;
+
+            _tplEditPrev = MakeSmallButton(_tplEdit, 10f, y, 44f, "<", delegate { _tplLineOffset = Mathf.Max(0, _tplLineOffset - TplLineRows); UpdateTemplateEdit(); });
+            _tplEditNext = MakeSmallButton(_tplEdit, PanelWidth - 54f, y, 44f, ">", delegate { _tplLineOffset += TplLineRows; UpdateTemplateEdit(); });
+            _tplEditPage = MakeLabel(_tplEdit, string.Empty, 62f, y + 7f, 0.75f);
+            _tplEditPage.autoSize = false;
+            _tplEditPage.width = PanelWidth - 124f;
+            _tplEditPage.textAlignment = UIHorizontalAlignment.Center;
+            y += 36f;
+
+            _tplEditHeight = y;
+        }
+
+        /// <summary>Reads the template files again; pick = the template to select afterwards (null: keep the current one if it still exists).</summary>
+        private void ReloadTemplates(QuayTemplate pick)
+        {
+            string keepId = pick != null ? pick.Id : _tplPicked != null ? _tplPicked.Id : null;
+            TemplateStore.Release(_templates);
+            _templates = TemplateStore.LoadAll();
+            _tplPicked = null;
+            for (int i = 0; i < _templates.Count; i++)
+            {
+                if (_templates[i].Id == keepId) _tplPicked = _templates[i];
+            }
+            _tplEditFor = null;
+            UpdateTemplateUi();
+        }
+
+        private QuayTemplate TemplateById(string id)
+        {
+            for (int i = 0; i < _templates.Count; i++)
+            {
+                if (_templates[i].Id == id) return _templates[i];
+            }
+            return null;
+        }
+
+        private void UpdateTemplateUi()
+        {
+            if (_tpl == null) return;
+
+            QuayTool tool = QuayTool.Instance;
+            int count = tool == null ? 0 : tool.Selection.Count;
+            _tplSel.text = Loc.T("selected") + count;
+
+            SetHeaderItem(_tplUi, _tplPicked == null ? null : TemplateItem(_tplPicked));
+            _tplPencil.isVisible = _tplPicked != null;
+            if (_tplPicked == null) _tplEditOpen = false;
+
+            if (_tplPicked != null)
+            {
+                _tplInfo.text = Loc.F("tpl_lines", _tplPicked.Nets.Count, _tplPicked.Props.Count, _tplPicked.Decals.Count);
+            }
+            else
+            {
+                _tplInfo.text = string.Empty;
+            }
+
+            _tplSave.isEnabled = count > 0;
+            _tplName.isEnabled = count > 0;
+            _tplApply.isEnabled = count > 0 && _tplPicked != null;
+            if (_resetBtn != null) _resetBtn.isEnabled = false;
+
+            UpdateTemplateEdit();
+            UpdateHeight();
+        }
+
+        private static string NetTitle(string model)
+        {
+            if (string.IsNullOrEmpty(model)) return Loc.T("tpl_empty_model");
+            try
+            {
+                NetInfo info = PrefabCollection<NetInfo>.FindLoaded(model);
+                if (info != null) return PropCatalog.TitleOf(info);
+            }
+            catch (Exception)
+            {
+                // the name is shown instead
+            }
+            return model;
+        }
+
+        private static string PropTitle(string key)
+        {
+            return string.IsNullOrEmpty(key) ? Loc.T("tpl_empty_model") : PropCatalog.TitleOfKey(key);
+        }
+
+        private static string DecalTitle(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return Loc.T("tpl_plain_path");
+            try
+            {
+                PropInfo info = DecalCatalog.Find(key);
+                if (info != null) return PropCatalog.TitleOf(info);
+            }
+            catch (Exception)
+            {
+                // the name is shown instead
+            }
+            return key;
+        }
+
+        private void UpdateTemplateEdit()
+        {
+            if (_tplEdit == null) return;
+
+            bool open = _tplEditOpen && _tplPicked != null && _tpl.isVisible;
+            _tplEdit.isVisible = open;
+            if (!open) return;
+
+            QuayTemplate t = _tplPicked;
+            if (_dlg != null && _dlg.isVisible && _tplEditFor != t.Id) _dlg.isVisible = false;
+            if (_tplEditFor != t.Id)
+            {
+                _tplEditFor = t.Id;
+                _tplEditName.text = t.Name;
+                _tplLineOffset = 0;
+            }
+
+            bool pic = t.Thumb != null;
+            _tplEditPic.isVisible = pic;
+            if (pic) _tplEditPic.texture = t.Thumb;
+            _tplEditNoPic.isVisible = !pic;
+
+            // the lines: network-lines, then props-lines, then texture-paths
+            int total = t.Nets.Count + t.Props.Count + t.Decals.Count;
+            int pages = Mathf.Max(1, (total + TplLineRows - 1) / TplLineRows);
+            _tplLineOffset = Mathf.Clamp(_tplLineOffset, 0, (pages - 1) * TplLineRows);
+            for (int i = 0; i < TplLineRows; i++)
+            {
+                int index = _tplLineOffset + i;
+                bool has = index < total;
+                _tplLineBtn[i].isVisible = has;
+                _tplLineDel[i].isVisible = has;
+                if (!has) continue;
+
+                int kind, k;
+                LineAt(t, index, out kind, out k);
+                string text = kind == 0 ? Loc.T("tpl_k_net") + NetTitle(t.Nets[k].Model)
+                            : kind == 1 ? Loc.T("tpl_k_prop") + PropTitle(t.Props[k].Prop)
+                            : Loc.T("tpl_k_decal") + DecalTitle(t.Decals[k].Prop);
+                _tplLineBtn[i].text = Shorten(text);
+                _tplLineBtn[i].tooltip = text;
+            }
+            _tplEditPage.text = (_tplLineOffset / TplLineRows + 1) + " / " + pages;
+            _tplEditPrev.isEnabled = _tplLineOffset > 0;
+            _tplEditNext.isEnabled = _tplLineOffset + TplLineRows < total;
+        }
+
+        /// <summary>The line at a flat index (network-lines first): its kind (0 net, 1 props, 2 path) and its index in that kind.</summary>
+        private static void LineAt(QuayTemplate t, int index, out int kind, out int k)
+        {
+            if (index < t.Nets.Count) { kind = 0; k = index; return; }
+            index -= t.Nets.Count;
+            if (index < t.Props.Count) { kind = 1; k = index; return; }
+            kind = 2;
+            k = index - t.Props.Count;
+        }
+
+        private static void Say(string text)
+        {
+            QuayTool tool = QuayTool.Instance;
+            if (tool != null) tool.Say(text);
+        }
+
+        /// <summary>Takes the picture of the template: the scene as the camera sees it now, without the interface.</summary>
+        private void CapturePicture(QuayTemplate t)
+        {
+            QuayTool tool = QuayTool.Instance;
+            if (tool == null) return;
+
+            string id = t.Id;
+            tool.CaptureThumbnail(TemplateStore.ThumbPath(t), delegate (bool ok)
+            {
+                QuayTemplate now = TemplateById(id);
+                if (now != null && ok) TemplateStore.LoadThumb(now);
+                if (!ok) Say(Loc.T("tpl_shot_failed"));
+                UpdateTemplateUi();
+            });
+        }
+
+        private void OnTemplateSave()
+        {
+            QuayTool tool = QuayTool.Instance;
+            if (tool == null) return;
+
+            string name = TemplateStore.CleanName(_tplName.text).Trim();
+            if (name.Length == 0)
+            {
+                tool.Say(Loc.T("tpl_noname"));
+                return;
+            }
+
+            ReloadTemplates(null); // the list on disk may have changed (names must stay unique)
+            QuayTemplate t = tool.SaveTemplate(name, _templates);
+            if (t == null) return;
+
+            _tplName.text = string.Empty;
+            ReloadTemplates(t);
+            CapturePicture(TemplateById(t.Id));
+        }
+
+        private void OnTemplateShot()
+        {
+            if (_tplPicked == null) return;
+            CapturePicture(_tplPicked);
+        }
+
+        private void OnTemplateRename()
+        {
+            if (_tplPicked == null) return;
+
+            string name = TemplateStore.CleanName(_tplEditName.text).Trim();
+            if (name.Length == 0)
+            {
+                Say(Loc.T("tpl_noname"));
+                return;
+            }
+
+            if (TemplateStore.Rename(_tplPicked, name, _templates)) Say(Loc.F("tpl_renamed", _tplPicked.Name));
+            else Say(Loc.T("tpl_save_failed"));
+            _tplEditFor = null;
+            _templates.Sort(delegate (QuayTemplate a, QuayTemplate b) { return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase); });
+            UpdateTemplateUi();
+        }
+
+        private void OnTemplateDuplicate()
+        {
+            if (_tplPicked == null) return;
+
+            QuayTemplate copy = TemplateStore.Duplicate(_tplPicked, _templates);
+            if (copy == null)
+            {
+                Say(Loc.T("tpl_save_failed"));
+                return;
+            }
+
+            Say(Loc.F("tpl_duplicated", copy.Name));
+            TemplateStore.Release(new List<QuayTemplate> { copy }); // the list is read again below, with its own pictures
+            ReloadTemplates(copy);
+        }
+
+        /// <summary>Asks "Delete / Cancel" in a solid box (third column, or over the first one when there is no third); yes runs when Delete is pressed.</summary>
+        private void Ask(string text, Action yes, bool thirdColumn)
+        {
+            if (_dlg == null) return;
+            ClosePopup();
+            _dlg.relativePosition = new Vector3(thirdColumn ? ToolsWidth + PanelWidth + 10f : ToolsWidth + 10f, TopY + 120f);
+            _dlgText.text = text;
+            _dlgYes = yes;
+            _dlg.isVisible = true;
+            _dlg.BringToFront();
+        }
+
+        private void BuildDialog()
+        {
+            // a solid box with a lighter frame (nothing shines through)
+            _dlg = AddUIComponent<UIPanel>();
+            _dlg.size = new Vector2(PanelWidth - 20f, 170f);
+            _dlg.backgroundSprite = Flat.Round;
+            _dlg.atlas = Flat.Atlas;
+            _dlg.color = new Color32(96, 112, 128, 255);
+            _dlg.isInteractive = true;
+            _dlg.isVisible = false;
+
+            UIPanel fill = _dlg.AddUIComponent<UIPanel>();
+            fill.size = new Vector2(_dlg.width - 4f, _dlg.height - 4f);
+            fill.relativePosition = new Vector3(2f, 2f);
+            fill.backgroundSprite = Flat.Round;
+            fill.atlas = Flat.Atlas;
+            fill.color = new Color32(30, 40, 46, 255);
+            fill.isInteractive = false;
+
+            _dlgText = _dlg.AddUIComponent<UILabel>();
+            _dlgText.autoSize = false;
+            _dlgText.wordWrap = true;
+            _dlgText.textScale = 0.9f;
+            _dlgText.textAlignment = UIHorizontalAlignment.Center;
+            _dlgText.size = new Vector2(_dlg.width - 30f, 80f);
+            _dlgText.relativePosition = new Vector3(15f, 24f);
+            _dlgText.isInteractive = false;
+
+            float w = (_dlg.width - 36f) * 0.5f;
+            UIButton del = MakeSmallButton(_dlg, 12f, 118f, w, Loc.T("tpl_do_delete"), delegate
+            {
+                _dlg.isVisible = false;
+                Action yes = _dlgYes;
+                _dlgYes = null;
+                if (yes != null) yes();
+            });
+            MakeRed(del);
+            MakeSmallButton(_dlg, 24f + w, 118f, w, Loc.T("tpl_cancel"), delegate
+            {
+                _dlg.isVisible = false;
+                _dlgYes = null;
+            });
+        }
+
+        private void OnTemplateDelete()
+        {
+            if (_tplPicked == null) return;
+            Ask(Loc.T("tpl_ask_tpl"), DeleteTemplate, true);
+        }
+
+        private void DeleteTemplate()
+        {
+            if (_tplPicked == null) return;
+            string name = _tplPicked.Name;
+            bool ok = TemplateStore.Delete(_tplPicked);
+            _tplPicked = null;
+            _tplEditOpen = false;
+            ReloadTemplates(null);
+            Say(ok ? Loc.F("tpl_deleted", name) : Loc.T("tpl_delete_failed"));
+        }
+
+        private void OnTemplateLineDelete(int row)
+        {
+            if (_tplPicked == null) return;
+
+            int index = _tplLineOffset + row;
+            string id = _tplPicked.Id;
+            Ask(Loc.T("tpl_ask_line"), delegate
+            {
+                QuayTemplate t = TemplateById(id);
+                if (t == null) return;
+                int kind, k;
+                LineAt(t, index, out kind, out k);
+                if (TemplateStore.RemoveLine(t, kind, k)) Say(Loc.T("tpl_line_removed"));
+                else Say(Loc.T("tpl_save_failed"));
+                UpdateTemplateUi();
+            }, true);
         }
 
         // ---------- prop line section ----------
@@ -2389,6 +3413,7 @@ namespace QuayTools
 
             if (SliderDragging && !Input.GetMouseButton(0)) SliderDragging = false;
 
+
             if (_historyVersion != History.Version)
             {
                 _historyVersion = History.Version;
@@ -2399,7 +3424,7 @@ namespace QuayTools
             {
                 _lockVersion = LockStore.Version + PedStore.Version + HideStore.Version;
                 QuayTool tool = QuayTool.Instance;
-                if (tool != null && (tool.CurrentMode == QuayTool.Mode.Lock || tool.CurrentMode == QuayTool.Mode.RemovePedestrian || tool.CurrentMode == QuayTool.Mode.HideProps)) LoadLockFromSelection();
+                if (tool != null && tool.CurrentMode == QuayTool.Mode.Segment) LoadLockFromSelection();
             }
 
             if (_restoreVersion != History.RestoreVersion)
@@ -2419,7 +3444,7 @@ namespace QuayTools
                 {
                     _dMulV, _dShiftXV, _pShiftXV, _dWidthV, _dScaleV, _dStepV, _dBoxV, _dLateralV, _dLiftV, _dStartV, _dEndV, _dHex,
                     _nStartV, _nEndV, _nLateralV, _nLiftV, _nScaleV, _pAngleV, _pScaleV, _pRandV,
-                    _netUi.Search, _decalUi.Search, _propUi.Search, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV
+                    _netUi.Search, _decalUi.Search, _propUi.Search, _tplName, _tplUi.Search, _tplEditName, _pStepV, _pStartV, _pEndV, _pLateralV, _pLiftV
                 };
                 for (int i = 0; i < fields.Length; i++)
                 {
