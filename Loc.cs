@@ -308,7 +308,8 @@ namespace QuayTools
             new[] { "pt-BR", "Português (Brasil)" },
             new[] { "zh-CN", "简体中文 (Chinese)" },
             new[] { "ja", "日本語 (Japanese)" },
-            new[] { "ko", "한국어 (Korean)" }
+            new[] { "ko", "한국어 (Korean)" },
+            new[] { "uk", "Українська" }
         };
 
         public static string LanguageName(string code)
