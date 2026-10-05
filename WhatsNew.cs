@@ -244,24 +244,34 @@ namespace QuayTools
                 En = new[]
                 {
                     "n|New tool Segment Settings: invert, lock, remove pedestrian path and hide default props in one window.",
+                    "n|New button Clear segments: removes all lines and settings from the selected segments, the inversion stays.",
                     "n|New tool Templates: save the lines of a segment with a picture and apply them to other segments.",
                     "n|New tool Settings: options moved from the mod options, controls help and a button that clears all edited quays.",
+                    "n|Translations: German, French, Spanish, Polish, Italian, Portuguese (Brazil), Ukrainian, Chinese, Japanese and Korean (first drafts, help on Crowdin).",
+                    "n|Free hotkeys: the tool activation and the quick flip can be any keys.",
+                    "n|Changelog window with all versions; What's new shows only the latest one.",
+                    "n|Mod options: tabs, compatibility check, reset of all settings, copy of the game log, a switch to hide tooltips, links.",
                     "u|Check boxes are now switches.",
                     "u|Selection: click selects one segment, Shift the whole quay, Ctrl adds or removes segments.",
                     "u|The window has the same height for all tools.",
-                    "u|New flat look of the window.",
-                    "u|The mod options are redesigned: tabs, free hotkeys, all options in one place, a switch to hide tooltips, links."
+                    "u|New flat look of all windows.",
+                    "u|The option Centre line at bends was removed: it is always on now."
                 },
                 Ru = new[]
                 {
                     "n|Новый инструмент «Настройки сегмента»: разворот, блокировка, удаление пешеходной дорожки и скрытие стандартных пропсов в одном окне.",
+                    "n|Новая кнопка «Очистить сегменты»: убирает все линии и параметры с выделенных сегментов, разворот остаётся.",
                     "n|Новый инструмент «Шаблоны»: сохраняйте линии сегмента с картинкой и применяйте их к другим сегментам.",
                     "n|Новый инструмент «Настройки»: опции перенесены из настроек мода, помощь в управлении и кнопка очистки всех отредактированных набережных.",
+                    "n|Переводы: немецкий, французский, испанский, польский, итальянский, португальский (Бразилия), украинский, китайский, японский и корейский (черновики, помощь на Crowdin).",
+                    "n|Свободные клавиши: активацию инструмента и быстрый разворот можно назначить на любые клавиши.",
+                    "n|Окно «Список изменений» со всеми версиями; «Что нового» показывает только последнюю.",
+                    "n|Настройки мода: вкладки, проверка совместимости, сброс всех настроек, копирование лога игры, переключатель скрытия подсказок, ссылки.",
                     "u|Флажки заменены переключателями.",
                     "u|Выделение: клик выделяет один сегмент, Shift - всю набережную, Ctrl добавляет или убирает сегменты.",
                     "u|У окна одинаковая высота для всех инструментов.",
-                    "u|Новый плоский вид окна.",
-                    "u|Страница настроек мода переделана: вкладки, свободные клавиши, все настройки в одном месте, переключатель скрытия подсказок, ссылки."
+                    "u|Новый плоский вид всех окон.",
+                    "u|Опция «Центральная линия на изгибах» удалена: теперь она всегда включена."
                 }
             }
         };
@@ -395,6 +405,15 @@ namespace QuayTools
 
         private static bool _changelog;
         private static bool _helpWindow;
+
+        /// <summary>The text of a changelog line: from the language file (key cl_&lt;version&gt;_&lt;n&gt;) when it is translated, else the built-in English / Russian line.</summary>
+        private static string ItemText(Entry e, int k, bool ru)
+        {
+            string text;
+            if (Loc.TryGet("cl_" + e.Version.ToString().Replace('.', '_') + "_" + k, out text)) return text;
+            string[] items = ru ? e.Ru : e.En;
+            return Strip(items[k]);
+        }
 
         private static string Strip(string item)
         {
@@ -648,6 +667,52 @@ namespace QuayTools
             return Loc.T(tag == 'n' ? "wn_tag_new" : tag == 'f' ? "wn_tag_fix" : "wn_tag_upd");
         }
 
+        /// <summary>Wrapped lines of a text in a label of the given width (scale 0.8), a cautious estimate with word wrapping.</summary>
+        private static int CountLines(string text, float width)
+        {
+            float x = 0f;
+            int lines = 1;
+            string[] words = text.Split(' ');
+            for (int w = 0; w < words.Length; w++)
+            {
+                string word = words[w];
+                float ww = 0f;
+                for (int c = 0; c < word.Length; c++) ww += CharWidth(word[c]);
+                float space = w > 0 ? 5f : 0f;
+                if (x > 0f && x + space + ww > width)
+                {
+                    lines++;
+                    x = 0f;
+                    space = 0f;
+                }
+                if (ww > width)
+                {
+                    // a very long word (CJK text has no spaces): it breaks anywhere
+                    for (int c = 0; c < word.Length; c++)
+                    {
+                        float cw = CharWidth(word[c]);
+                        if (x + cw > width) { lines++; x = 0f; }
+                        x += cw;
+                    }
+                }
+                else x += space + ww;
+            }
+            return lines;
+        }
+
+        private static float CharWidth(char c)
+        {
+            if (c >= 0x2E80) return 16f;                  // CJK, Hangul, full-width forms
+            if (c == 'W' || c == 'M' || c == 'm' || c == 'Ж' || c == 'Ш' || c == 'Щ' || c == 'Ю' || c == 'Ф') return 12.5f;
+            if (c == 'i' || c == 'l' || c == '.' || c == ',' || c == '|' || c == 'I' || c == 'i' || c == ';' || c == ':' || c == '!') return 4.8f;
+            return 9.4f;
+        }
+
+        private static float ItemHeight(string text, float labelWidth)
+        {
+            return CountLines(text, labelWidth) * 18f;
+        }
+
         private static void BuildChangelog(UIPanel box, List<Entry> news, bool ru, float width, float height, float pad)
         {
             float top = 64f;
@@ -656,7 +721,7 @@ namespace QuayTools
             float viewW = width - 2f * pad - 14f;
             UIScrollablePanel scroll = CreateScroll(box, width, height, pad);
 
-            int perLine = Mathf.Max(20, (int)((viewW - 150f) / 6.6f));
+            float labelW = viewW - 150f;
             for (int i = 0; i < news.Count; i++)
             {
                 string[] items = ru ? news[i].Ru : news[i].En;
@@ -689,9 +754,9 @@ namespace QuayTools
                 float y = 0f;
                 for (int k = 0; k < items.Length; k++)
                 {
-                    string text = Strip(items[k]);
-                    char tag = TagOf(items[k]);
-                    int lines = Mathf.Max(1, Mathf.CeilToInt((float)text.Length / perLine));
+                    string text = ItemText(news[i], k, ru);
+                    char tag = TagOf(news[i].En[Mathf.Min(k, news[i].En.Length - 1)]);
+                    float textH = ItemHeight(text, labelW);
 
                     UIPanel badge = body.AddUIComponent<UIPanel>();
                     badge.atlas = Flat.Atlas;
@@ -716,13 +781,13 @@ namespace QuayTools
                     tl.autoSize = false;
                     tl.wordWrap = true;
                     tl.width = viewW - 140f;
-                    tl.height = lines * 17f;
+                    tl.height = textH;
                     tl.textScale = 0.8f;
                     tl.text = text;
                     tl.relativePosition = new Vector3(126f, y + 3f);
                     tl.isInteractive = false;
 
-                    y += Mathf.Max(26f, lines * 17f + 8f);
+                    y += Mathf.Max(26f, textH + 8f);
                 }
                 body.height = y;
                 float bodyH = y;
@@ -788,34 +853,24 @@ namespace QuayTools
                 back.isInteractive = false;
             }
 
-            float width = _changelog || _helpWindow ? 660f : 540f;
+            float width = 660f;
             const float pad = 24f;
-            float textWidth = width - 2f * pad;
 
-            // text of the window: one block per version (a version header only when several versions are shown)
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            int lines = 0;
-            for (int i = 0; i < news.Count; i++)
+            float height = Mathf.Min(res.y - 80f, 780f);
+            if (!_changelog && !_helpWindow)
             {
-                if (news.Count > 1)
+                // What's new: the same cards as the changelog, only the newest version; the window fits its content
+                float labelW = width - 2f * pad - 14f - 150f;
+                float content = 0f;
+                for (int i = 0; i < news.Count; i++)
                 {
-                    if (i > 0) { sb.Append('\n'); lines++; }
-                    sb.Append("v").Append(news[i].Version.ToString()).Append('\n');
-                    lines++;
+                    string[] its = ru ? news[i].Ru : news[i].En;
+                    float y = 0f;
+                    for (int k = 0; k < its.Length; k++) y += Mathf.Max(26f, ItemHeight(ItemText(news[i], k, ru), labelW) + 8f);
+                    content += 44f + y + 8f + 6f;
                 }
-                string[] items = ru ? news[i].Ru : news[i].En;
-                for (int k = 0; k < items.Length; k++)
-                {
-                    sb.Append("<color #fac828>\u2022</color>  ").Append(Strip(items[k]));
-                    if (k < items.Length - 1 || i < news.Count - 1) sb.Append('\n');
-                    lines += 1 + Strip(items[k]).Length / 62;   // wrapped lines, estimated
-                }
+                height = Mathf.Min(res.y - 80f, 64f + content + 70f);
             }
-
-            float bodyHeight = lines * 26f + 8f;
-            float height = 56f + 34f + bodyHeight + 70f;
-            height = Mathf.Min(height, res.y - 80f);
-            if (_changelog || _helpWindow) height = Mathf.Min(res.y - 80f, 780f);
 
             UIPanel box = _blocker.AddUIComponent<UIPanel>();
             box.atlas = Flat.Atlas;
@@ -843,30 +898,9 @@ namespace QuayTools
             {
                 BuildHelpWindow(box, width, height, pad);
             }
-            else if (_changelog)
-            {
-                BuildChangelog(box, news, ru, width, height, pad);
-            }
             else
             {
-                UILabel ver = box.AddUIComponent<UILabel>();
-                ver.text = Loc.F("wn_version", current.ToString());
-                ver.textScale = 0.9f;
-                ver.textColor = new Color32(250, 200, 40, 255);
-                ver.relativePosition = new Vector3(pad, 54f);
-                ver.isInteractive = false;
-
-                UILabel body = box.AddUIComponent<UILabel>();
-                body.autoSize = false;
-                body.wordWrap = true;
-                body.processMarkup = true;
-                body.width = textWidth;
-                body.height = bodyHeight;
-                body.textScale = 0.95f;
-                body.text = sb.ToString();
-                body.relativePosition = new Vector3(pad, 88f);
-                body.isInteractive = false;
-
+                BuildChangelog(box, news, ru, width, height, pad);
             }
 
             UIButton ok = box.AddUIComponent<UIButton>();

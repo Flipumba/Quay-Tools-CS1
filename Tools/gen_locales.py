@@ -38,6 +38,19 @@ for m in pat.finditer(body):
     en[m.group(1)] = unescape(m.group(2))
     ru[m.group(1)] = unescape(m.group(3))
 
+# changelog lines of WhatsNew.cs -> keys cl_<major>_<minor>_<build>_<n> (the tag "n|" / "u|" / "f|" stays in the code)
+wn = open(os.path.join(root, 'WhatsNew.cs'), encoding='utf-8').read()
+strlit = re.compile(r'"((?:[^"\\]|\\.)*)"')
+vers = list(re.finditer(r'Version = new Version\((\d+), (\d+), (\d+)\)', wn))
+for n, m in enumerate(vers):
+    end = vers[n + 1].start() if n + 1 < len(vers) else wn.index('};', m.start())
+    seg = wn[m.end():end]
+    e = seg.index('En = new[]'); r = seg.index('Ru = new[]')
+    ver = '_'.join(m.groups())
+    for target, part in ((en, seg[e:r]), (ru, seg[r:])):
+        for k, t in enumerate(strlit.findall(part)):
+            target['cl_%s_%d' % (ver, k)] = unescape(t[2:] if len(t) > 2 and t[1] == '|' else t)
+
 os.makedirs(os.path.join(root, 'Locales'), exist_ok=True)
 for name, data in (('en', en), ('ru', ru)):
     with open(os.path.join(root, 'Locales', name + '.json'), 'w', encoding='utf-8', newline='\n') as f:

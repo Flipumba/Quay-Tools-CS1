@@ -127,6 +127,8 @@ namespace QuayTools
         // orientation lock section
         private UIPanel _lock;
         private float _lockHeight;
+        private float _lockAct;
+        private UIButton _lockClear;
         private UILabel _lockSel;
         private Toggle _tgLock, _tgNop, _tgHide;
         private UIButton _flipBtn;
@@ -1594,7 +1596,7 @@ namespace QuayTools
 
             float section = addMode ? _netHeight : decalMode ? _decalHeight : propMode ? _propHeight : tplMode ? _tplHeight : setMode ? _setHeight : lockMode ? _lockHeight : 0f;
             float left = addMode ? _netLeft : decalMode ? _decalLeft : propMode ? _propLeft : section;
-            float act = addMode ? _netAct : decalMode ? _decalAct : propMode ? _propAct : setMode ? _setAct : -1f;
+            float act = addMode ? _netAct : decalMode ? _decalAct : propMode ? _propAct : setMode ? _setAct : lockMode ? _lockAct : -1f;
 
             if (select)
             {
@@ -1631,7 +1633,7 @@ namespace QuayTools
             float delta = barY - oldBarY;
             _bar.relativePosition = new Vector3(x, barY);
 
-            UIButton first = addMode ? _netRemove : decalMode ? _dRemove : propMode ? _propRemove : setMode ? _setClear : null;
+            UIButton first = addMode ? _netRemove : decalMode ? _dRemove : propMode ? _propRemove : setMode ? _setClear : lockMode ? _lockClear : null;
             UIButton second = addMode ? _netClear : decalMode ? _dClear : propMode ? _propClear : null;
             MoveDown(first, delta);
             MoveDown(second, delta);
@@ -2248,6 +2250,24 @@ namespace QuayTools
             _tgNop = MakeSegmentToggle(y, "seg_nop", "NoPedestrian.png", "seg_nop_tip", "nop"); y += 42f;
             _tgHide = MakeSegmentToggle(y, "seg_hide", "HideProps.png", "seg_hide_tip", "hp"); y += 42f;
 
+            // clear: removes everything of the mod from the selected segments except the inversion
+            _lockAct = y + 4f;
+            _lockClear = _lock.AddUIComponent<UIButton>();
+            _lockClear.width = PanelWidth - 20f;
+            _lockClear.height = 32f;
+            _lockClear.relativePosition = new Vector3(10f, _lockAct);
+            StyleButton(_lockClear);
+            _lockClear.text = Loc.T("seg_clear");
+            _lockClear.textScale = 0.85f;
+            _lockClear.tooltip = WrapText(Loc.T("seg_clear_tip"), 64);
+            MakeRed(_lockClear);
+            _lockClear.eventClicked += delegate (UIComponent c, UIMouseEventParameter p)
+            {
+                QuayTool tool = QuayTool.Instance;
+                if (tool != null) tool.ClearSelectedSegments();
+            };
+            y = _lockAct + 38f;
+
             _lockHeight = y;
         }
 
@@ -2298,6 +2318,7 @@ namespace QuayTools
             _tgLock.Button.isEnabled = count > 0;
             _tgNop.Button.isEnabled = count > 0;
             _tgHide.Button.isEnabled = count > 0;
+            _lockClear.isEnabled = count > 0;
             SetToggle(_tgLock, count > 0 && locked == count);
             _tgLock.Mixed = locked > 0 && locked < count;
             UpdateToggle(_tgLock);

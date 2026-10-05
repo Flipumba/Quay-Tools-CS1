@@ -393,6 +393,21 @@ namespace QuayTools
             FenceApplier.EditDecal(SelectionCopy(), index, property, apply);
         }
 
+        /// <summary>Removes every modification of the mod from the selected segments: network-lines, props-lines, texture-paths, lock, pedestrian path, hidden props. The inversion stays.</summary>
+        public void ClearSelectedSegments()
+        {
+            if (_selected.Count == 0) { _status = Loc.T("select_first"); return; }
+            FenceApplier.Run(SelectionCopy(), null, delegate (ushort id)
+            {
+                NetLineStore.Remove(id);
+                PropLineStore.Remove(id);
+                DecalStore.Remove(id);
+                LockStore.SetRaw(id, -1);
+                PedStore.SetBlocked(id, false);
+                HideStore.SetHidden(id, false);
+            }, "seg_cleared", Report, true);
+        }
+
         // reset, undo, redo
 
         /// <summary>Back to default settings of the current mode for the selected segments.</summary>

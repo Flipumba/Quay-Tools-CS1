@@ -45,6 +45,9 @@ namespace QuayTools
             { "set_clear_tip", new[] { "Clears all edited quays on the current map. Removes from every segment: network-lines, props-lines, texture-paths, locks of the orientation, removed pedestrian paths and hidden default props. Nothing else is touched: the quays themselves, roads and the game's own fences stay, flipped segments stay flipped, and the template files are kept. Asks for a confirmation first. Undo brings everything back.", "Очищает все отредактированные набережные на текущей карте. Убирает с каждого сегмента: сетевые линии, линии пропсов, текстурные дорожки, блокировки разворота, убранные пешеходные дорожки и скрытые стандартные пропсы. Больше ничего не трогает: сами набережные, дороги и собственные заборы игры остаются, развёрнутые сегменты остаются развёрнутыми, файлы шаблонов сохраняются. Сначала спрашивает подтверждение. Отмена возвращает всё." } },
             { "clear_all_ask", new[] { "This action will clear all edited quays on the current map.", "Действие очистит все отредактированные набережные на текущей карте." } },
             { "clear_all_done", new[] { "All modifications removed, segments: {0}", "Все изменения удалены, сегм.: {0}" } },
+            { "seg_clear", new[] { "Clear segments", "Очистить сегменты" } },
+            { "seg_clear_tip", new[] { "Removes everything of Quay Tools from the selected segments: network-lines, props-lines, texture-paths, the orientation lock, the removed pedestrian path and hidden default props. The inversion stays. Undo brings everything back.", "Убирает с выделенных сегментов всё, что добавил Quay Tools: сетевые линии, линии пропсов, текстурные дорожки, блокировку разворота, убранную пешеходную дорожку и скрытые стандартные пропсы. Разворот остаётся. Отмена возвращает всё." } },
+            { "seg_cleared", new[] { "Segments cleared: {0}", "Сегменты очищены: {0}" } },
             { "clear_all_none", new[] { "There are no modifications to remove", "Изменений для удаления нет" } },
             { "mode_templates", new[] { "Templates", "Шаблоны" } },
             { "hint_tpl", new[] { "Save the lines of a segment (network-lines, props-lines, texture-paths) as a template and apply it to other segments. Select segments: the template is saved from the first selected segment and applied to all selected ones, replacing their lines. Undo restores them.", "Сохраняйте линии сегмента (сетевые линии, линии пропсов, текстурные дорожки) как шаблон и применяйте его к другим сегментам. Выделите сегменты: шаблон сохраняется с первого выделенного сегмента и применяется ко всем выделенным, заменяя их линии. Отмена возвращает их." } },
@@ -265,12 +268,12 @@ namespace QuayTools
             { "wn_tag_new", new[] { "Added", "Добавлено" } },
             { "wn_tag_upd", new[] { "Updated", "Обновлено" } },
             { "wn_tag_fix", new[] { "Fixed", "Исправлено" } },
-            { "opt_lang", new[] { "Language / Язык", "Language / Язык" } },
+            { "opt_lang", new[] { "Language", "Язык" } },
             { "wn_title", new[] { "What's new in Quay Tools?", "Что нового в Quay Tools?" } },
             { "wn_version", new[] { "Version {0}", "Версия {0}" } },
             { "opt_whatsnew", new[] { "Show what's new", "Показать «Что нового»" } },
             { "wn_ok", new[] { "OK", "OK" } },
-            { "opt_lang_auto", new[] { "Auto (game language) / Авто", "Auto (game language) / Авто" } },
+            { "opt_lang_auto", new[] { "Auto (game language)", "Авто (Язык игры)" } },
             { "opt_quickflip", new[] { "Enable quick-flip hotkey (Ctrl + key over a quay, no tool needed)", "Включить быстрый разворот (Ctrl + клавиша над набережной, инструмент не нужен)" } },
             { "opt_hotkey", new[] { "Quick-flip hotkey", "Клавиша быстрого разворота" } },
             { "opt_swap", new[] { "Swap land/water sides for fences (use only if fences go to the wrong side everywhere)", "Поменять местами сушу и воду для заборов (только если заборы везде уходят не на ту сторону)" } },
@@ -490,6 +493,14 @@ namespace QuayTools
                 Ensure();
                 return _generation;
             }
+        }
+
+        /// <summary>The text of a key from the language file only (no fallback); false when the file has none.</summary>
+        public static bool TryGet(string key, out string text)
+        {
+            Ensure();
+            text = null;
+            return _file != null && _file.TryGetValue(key, out text) && !string.IsNullOrEmpty(text);
         }
 
         public static string T(string key)

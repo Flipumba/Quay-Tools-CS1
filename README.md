@@ -20,6 +20,8 @@ One tool (crossed wrench and screwdriver) for the settings of whole quay segment
 - **Remove pedestrian path** (switch): citizens do not walk on the selected segments and do not see them as a path (the pathfinder skips them, also with TM:PE). Citizens whose route already crosses one get a new route. Vehicle-only paths are not affected; use it only on pedestrian quays.
 - **Hide default props** (switch): hides the props that come with the quay model (lights, trees, benches) on the selected segments. Your own Props-line props stay. Other segments of the same quay type are not affected.
 
+- **Clear segments** (red button above Undo / Redo): removes everything of Quay Tools from the selected segments (network-lines, props-lines, texture-paths, lock, removed pedestrian path, hidden default props). The inversion stays. Undo brings everything back.
+
 Segments with a lock, without a pedestrian path or with hidden props are drawn red while the tool is active. A switch shows "on" when all selected segments have the setting.
 
 #### Quick Flip
@@ -218,8 +220,9 @@ Translations live in `Locales/<code>.json` (flat key → text). `en.json` is the
 - Delete questions (template, template line, all modifications) are solid boxes with Delete / Cancel buttons.
 - The mod page in the game options is redrawn in the same flat style: header with the mod icon, **What's new** (with a switch for the update window), **Language**, **Hotkeys** (click a field and press the new keys: tool activation, quick flip), **Settings** (all options with short names, full descriptions as tooltips, the new switch **Hide tooltips**) and **Support** (links to Crowdin, GitHub, Boosty).
 - The mod page has three tabs: **Main**, **Advanced** (changelog, a compatibility check of the mod, reset of all settings with a confirmation, copy the game log to the desktop) and **Links** (Crowdin, GitHub, Boosty, Steam Workshop page).
-- Translations are now loaded from `Locales/*.json` (Crowdin-ready) with English fallback.
+- Translations are now loaded from `Locales/*.json` (Crowdin-ready) with English fallback. Added German, French, Spanish, Polish, Italian, Portuguese (Brazil), Ukrainian, Chinese (Simplified), Japanese and Korean (machine-translated first drafts, corrections welcome on Crowdin).
 - **What's new** shows only the newest version; **Changelog** (Advanced tab) lists all versions from 0.3.5 as folding cards with Added / Updated / Fixed tags.
+- The texts of **What's new** and **Changelog** are translated too (keys `cl_<version>_<n>` in `Locales/*.json`; a missing line falls back to English). For a new version add the lines to `WhatsNew.cs` and run `python3 Tools/gen_locales.py` (it exports them to `en.json` / `ru.json`).
 - The quick-flip key can now be any key (with Ctrl / Alt if you like) instead of one of five.
 
 ### v0.5.7
